@@ -15,6 +15,7 @@ env:
   STARTDATE_CUTOFF: "2026-03-01"
   CITY: "To"
   CHROME_HEADLESS: "1"
+  PYTHONUNBUFFERED: "1"
 
   KEBU_LITE_BRANCH: "data/registered-programs"  # merged to main manually when ready for prod
 
