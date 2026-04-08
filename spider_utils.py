@@ -19,7 +19,7 @@ from openai import OpenAI
 from ast import literal_eval
 
 sleep_time = 2
-WAIT_TIMEOUT = 15  # seconds for explicit waits
+WAIT_TIMEOUT = 30  # seconds for explicit waits (30 for CI, 15 was too short)
 
 # Listing pagination (Toronto Active Communities): "View more" is inside <button><span>
 # with newlines/whitespace. XPath `span[text()='View more']` does not match.
@@ -171,11 +171,18 @@ def initiate_and_get_all_activities(site_slug="toronto"):
     """Open browser and load activity search page; activity list comes from embedded JSON (new site: no hover menu)."""
     options = webdriver.ChromeOptions()
     if os.environ.get("CHROME_HEADLESS", "").strip().lower() in {"1", "true", "yes"}:
-        options.add_argument("--headless")
+        options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
     driver = webdriver.Chrome(options=options)
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+    })
     base = "https://anc.ca.apm.activecommunities.com"
     # New site: use activity search page; activity list is in embedded state, not hover dropdown
     url = f"{base}/{site_slug}/activity/search?onlineSiteId=0"
