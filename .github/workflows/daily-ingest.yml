@@ -1,8 +1,8 @@
 name: Daily Ingest - Registered Programs
 
 on:
-  schedule:
-    - cron: "0 14 * * *"  # 10:00 AM EDT (UTC-4) / 9:00 AM EST (UTC-5)
+  # schedule:
+  #   - cron: "0 14 * * *"  # 10:00 AM EDT (UTC-4) / 9:00 AM EST (UTC-5)
   workflow_dispatch:
     inputs:
       year_and_season:
