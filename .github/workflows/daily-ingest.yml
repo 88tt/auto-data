@@ -28,10 +28,10 @@ jobs:
         include:
           - group: group-a
             activities: "Swim,Skate - ,Ski/Snowboard - "
-          - group: group-b
-            activities: "Sports -,Hobbies,Arts -,Leadership"
-          - group: group-c
-            activities: "CampTO,Early Years,FitnessTO,After School,Adapted Activities"
+          # - group: group-b
+          #   activities: "Sports -,Hobbies,Arts -,Leadership"
+          # - group: group-c
+          #   activities: "CampTO,Early Years,FitnessTO,After School,Adapted Activities"
 
     steps:
       - name: Checkout
