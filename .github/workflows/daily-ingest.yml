@@ -1,0 +1,147 @@
+name: Daily Ingest - Registered Programs
+
+on:
+  schedule:
+    - cron: "0 14 * * *"  # 10:00 AM EDT (UTC-4) / 9:00 AM EST (UTC-5)
+  workflow_dispatch:
+    inputs:
+      year_and_season:
+        description: "Season identifier (e.g. 2026s2To)"
+        required: false
+        default: "2026s2To"
+
+env:
+  YEAR_AND_SEASON: ${{ github.event.inputs.year_and_season || '2026s2To' }}
+  STARTDATE_CUTOFF: "2026-03-01"
+  CITY: "To"
+  CHROME_HEADLESS: "1"
+
+  KEBU_LITE_BRANCH: "data/registered-programs"  # merged to main manually when ready for prod
+
+jobs:
+  scrape-ingest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # let other groups continue if one fails
+      matrix:
+        include:
+          - group: group-a
+            activities: "Swim,Skate - ,Ski/Snowboard - "
+          - group: group-b
+            activities: "Sports -,Hobbies,Arts -,Leadership"
+          - group: group-c
+            activities: "CampTO,Early Years,FitnessTO,After School,Adapted Activities"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.4.0
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Scrape (${{ matrix.group }})
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_MAP_API_KEY: ${{ secrets.GOOGLE_MAP_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ACTIVITIES: ${{ matrix.activities }}
+        run: python 1_scrape_w_selenium.py
+
+      - name: Clean (${{ matrix.group }})
+        env:
+          ACTIVITIES: ${{ matrix.activities }}
+        run: python 2_clean_data.py
+
+      - name: Insert to DB (${{ matrix.group }})
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_MAP_API_KEY: ${{ secrets.GOOGLE_MAP_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python 3_insert_to_db.py
+
+  export:
+    runs-on: ubuntu-latest
+    needs: scrape-ingest
+
+    steps:
+      - name: Checkout kebu-data-prep-registeredTO
+        uses: actions/checkout@v4.2.2
+
+      - name: Checkout kebu-lite (${{ env.KEBU_LITE_BRANCH }})
+        uses: actions/checkout@v4.2.2
+        with:
+          repository: 88tt/kebu-lite
+          ref: ${{ env.KEBU_LITE_BRANCH }}
+          path: kebu-lite
+          token: ${{ secrets.KEBU_LITE_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.4.0
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Export registered JSON to kebu-lite
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OUT_DIR: ${{ github.workspace }}/kebu-lite/public/data/registered
+          SCRAPE_RUN: scraped${{ github.run_id }}
+        run: python 4_db_to_json.py
+
+      - name: Validate output files
+        run: |
+          python - <<'EOF'
+          import json, sys, os
+
+          errors = []
+          registered_dir = "kebu-lite/public/data/registered"
+
+          skip = {"manifest.json", "export_counts.json", "centre_programs.json", "programs.json"}
+          sport_files = []
+          for root, dirs, files in os.walk(registered_dir):
+              for f in files:
+                  if f.endswith(".json") and f not in skip:
+                      sport_files.append(os.path.join(root, f))
+
+          if not sport_files:
+              errors.append(f"No sport JSON files found under {registered_dir}")
+          for path in sorted(sport_files):
+              try:
+                  data = json.load(open(path))
+                  count = len(data.get("sessionsWithCourses", []))
+                  print(f"{os.path.relpath(path)}: {count} sessions")
+                  if count < 1:
+                      errors.append(f"{path}: 0 sessions — suspiciously empty")
+              except json.JSONDecodeError as e:
+                  errors.append(f"{path}: invalid JSON — {e}")
+
+          if errors:
+              print("\nVALIDATION FAILED:")
+              for e in errors:
+                  print(f"  - {e}")
+              sys.exit(1)
+
+          print(f"\nAll {len(sport_files)} files OK")
+          EOF
+
+      - name: Commit and push to kebu-lite
+        working-directory: kebu-lite
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/data/registered/
+          if git diff --cached --quiet; then
+            echo "No changes to registered data — skipping commit"
+          else
+            git commit -m "chore: update registered programs data $(date -u +%Y-%m-%d)"
+            git push
+          fi

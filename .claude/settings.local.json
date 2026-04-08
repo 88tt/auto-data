@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/kwonghimto/kebu-data-prep-dropinsTO/.github/workflows/**)",
+      "Read(//Users/kwonghimto/kebu-data-prep-dropinsTO/**)",
+      "Bash(cat /Users/kwonghimto/kebu-data-prep/migrations/*.sql)",
+      "Bash(gh secret:*)",
+      "Bash(brew list:*)",
+      "Bash(find:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}

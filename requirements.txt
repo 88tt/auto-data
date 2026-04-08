@@ -1,0 +1,10 @@
+selenium>=4.0
+pandas
+numpy
+beautifulsoup4
+lxml
+sqlalchemy
+psycopg2-binary
+requests
+python-dotenv
+openai
