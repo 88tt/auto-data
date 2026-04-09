@@ -10,4 +10,5 @@ venv/
 raw_data/
 output/
 .DS_Store
+.claude/
 .ruff_cache/
