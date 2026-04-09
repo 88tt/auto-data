@@ -115,15 +115,20 @@ jobs:
 
           if not sport_files:
               errors.append(f"No sport JSON files found under {registered_dir}")
+          non_empty = 0
           for path in sorted(sport_files):
               try:
                   data = json.load(open(path))
                   count = len(data.get("sessionsWithCourses", []))
-                  print(f"{os.path.relpath(path)}: {count} sessions")
-                  if count < 1:
-                      errors.append(f"{path}: 0 sessions — suspiciously empty")
+                  status = f"{count} sessions" if count > 0 else "empty (not yet scraped)"
+                  print(f"{os.path.relpath(path)}: {status}")
+                  if count > 0:
+                      non_empty += 1
               except json.JSONDecodeError as e:
                   errors.append(f"{path}: invalid JSON — {e}")
+
+          if non_empty == 0:
+              errors.append("All sport files are empty — scrape likely failed")
 
           if errors:
               print("\nVALIDATION FAILED:")
@@ -131,7 +136,7 @@ jobs:
                   print(f"  - {e}")
               sys.exit(1)
 
-          print(f"\nAll {len(sport_files)} files OK")
+          print(f"\n{non_empty}/{len(sport_files)} files have data")
           EOF
 
       - name: Commit and push to kebu-lite
