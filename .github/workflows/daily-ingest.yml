@@ -68,7 +68,7 @@ jobs:
 
   export:
     runs-on: ubuntu-latest
-    needs: scrape-ingest
+    # needs: scrape-ingest
 
     steps:
       - name: Checkout kebu-data-prep-registeredTO
