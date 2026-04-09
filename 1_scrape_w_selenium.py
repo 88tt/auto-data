@@ -1,36 +1,8 @@
 """
-Scrape Active Communities activity/course data with Selenium (Toronto, other cities).
-Saves raw CSVs and page source per activity under raw_data/<CITY>/<YEAR_AND_SEASON>/scrapedYYYYMMDD/ (one subfolder per run).
-
 Usage:
   python 1_scrape_w_selenium.py
   # Different activity: ACTIVITY_FILTER="Swim" python 1_scrape_w_selenium.py
   # Other city: CITY=Va SITE_SLUG=vaughan python 1_scrape_w_selenium.py
-
-Chrome driver: https://googlechromelabs.github.io/chrome-for-testing/#stable
-Place chromedriver in PATH (command+shift+g -> /usr/local/bin -> drag chromedriver into the folder).
-setting/security/privacy: choose allow anyway
-https://www.youtube.com/watch?v=m4-Z5KqDHpU&ab_channel=AutomatewithJonathan
-
-alias ipython='python -m IPython'
-
-substring used for acitivty selection
-Swim,Skate -,Ski/Snowboard - ,Sports -,Hobbies,Arts -,Leadership,CampTO,Early Years,FitnessTO,After School,Adapted Activities
-
-Prevent sleep while the script runs
-macOS: In Terminal before running the scraper:
-caffeinate -i env ACTIVITY_FILTER="Swim" python 1_scrape_w_selenium.py
-caffeinate -i env ACTIVITIES="Ski/Snowboard -,Sports -,Hobbies,Arts -,Leadership" python 1_scrape_w_selenium.py
-caffeinate -i env ACTIVITIES="Skate - ,CampTO,Early Years,FitnessTO,After School,Adapted Activities" python 1_scrape_w_selenium.py
-
-caffeinate -i keeps the system (and display) from sleeping until the command exits.
-Or in System Settings → Lock Screen (or Energy Saver), temporarily set “Turn display off” and “Prevent automatic sleeping” so the Mac stays awake.
-
-Listing availability (scraped into courses.csv column `availability`):
-- Full: <div class="activity-card__cornerMark activity-card__cornerMark--Full">Full</div>
-- Unknown ribbon: activity-card__cornerMark--unknown (ambiguous / unclassified in markup)
-- No corner mark: stored as `open` (not labeled full on the listing)
-- sometimes i see 'x space(s) left'
 
 """
 import json
