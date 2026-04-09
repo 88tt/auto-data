@@ -21,7 +21,6 @@ env:
 
 jobs:
   scrape-ingest:
-    if: false  # disabled for export testing
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false  # let other groups continue if one fails
@@ -29,10 +28,10 @@ jobs:
         include:
           - group: group-a
             activities: "Swim,Skate - ,Ski/Snowboard - "
-          # - group: group-b
-          #   activities: "Sports -,Hobbies,Arts -,Leadership"
-          # - group: group-c
-          #   activities: "CampTO,Early Years,FitnessTO,After School,Adapted Activities"
+          - group: group-b
+            activities: "Sports -,Hobbies,Arts -,Leadership"
+          - group: group-c
+            activities: "CampTO,Early Years,FitnessTO,After School,Adapted Activities"
 
     steps:
       - name: Checkout
@@ -69,7 +68,7 @@ jobs:
 
   export:
     runs-on: ubuntu-latest
-    # needs: scrape-ingest
+    needs: scrape-ingest
 
     steps:
       - name: Checkout kebu-data-prep-registeredTO
