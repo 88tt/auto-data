@@ -60,14 +60,15 @@ dfcentres['name'] = pk_prefix + dfcentres['Location']
 # Load existing centres for current year/season/city only (name starts with pk_prefix, e.g. 2026s2To_%_)
 _like_escape = lambda s: s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 existing_centres_prefix = _like_escape(pk_prefix) + "%"
-existing_centres_df = pd.read_sql(
-    text(
-        "SELECT name, address, latitude, longitude, fullname, url FROM activities_centres "
-        "WHERE name LIKE :prefix ESCAPE '\\'"
-    ),
-    con=engine,
-    params={"prefix": existing_centres_prefix},
-)
+with engine.connect() as _conn:
+    existing_centres_df = pd.read_sql(
+        text(
+            "SELECT name, address, latitude, longitude, fullname, url FROM activities_centres "
+            "WHERE name LIKE :prefix ESCAPE '\\'"
+        ),
+        con=_conn,
+        params={"prefix": existing_centres_prefix},
+    )
 existing_names = set(existing_centres_df["name"])
 dfcentres_existing = dfcentres[dfcentres["name"].isin(existing_names)].merge(
     existing_centres_df, on="name", how="left", suffixes=("", "_db")
