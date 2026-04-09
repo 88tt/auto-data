@@ -34,7 +34,7 @@ season = _latest_scrape_dir()
 # Script 3: database
 # ---------------------------------------------------------------------------
 # Support DATABASE_URL (Neon/CI format) or DB_URL; fall back to local dev default.
-DB_URL = os.environ.get("DATABASE_URL", os.environ.get("DB_URL", "postgresql://postgres:keepmbz@127.0.0.1:5432/kebu"))
+DB_URL = os.environ.get("DATABASE_URL", os.environ.get("DB_URL", "postgresql://localhost:5432/dev"))
 
 
 def _env_bool(name: str, default: bool = False) -> bool:

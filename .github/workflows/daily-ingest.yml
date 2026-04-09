@@ -110,15 +110,15 @@ jobs:
     needs: insert
 
     steps:
-      - name: Checkout kebu-data-prep-registeredTO
+      - name: Checkout this repo
         uses: actions/checkout@v4.2.2
 
-      - name: Checkout kebu-lite (${{ env.TARGET_BRANCH }})
+      - name: Checkout target (${{ env.TARGET_BRANCH }})
         uses: actions/checkout@v4.2.2
         with:
           repository: ${{ secrets.TARGET_REPO }}
           ref: ${{ env.TARGET_BRANCH }}
-          path: kebu-lite
+          path: target
           token: ${{ secrets.TARGET_REPO_TOKEN }}
 
       - name: Set up Python
@@ -130,10 +130,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Export registered JSON to kebu-lite
+      - name: Export registered JSON to target
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          OUT_DIR: ${{ github.workspace }}/kebu-lite/public/data/registered
+          OUT_DIR: ${{ github.workspace }}/target/public/data/registered
           SCRAPE_RUN: scraped${{ github.run_id }}
         run: python 4_db_to_json.py
 
@@ -143,7 +143,7 @@ jobs:
           import json, sys, os
 
           errors = []
-          registered_dir = "kebu-lite/public/data/registered"
+          registered_dir = "target/public/data/registered"
 
           skip = {"manifest.json", "export_counts.json", "centre_programs.json", "programs.json"}
           sport_files = []
@@ -178,8 +178,8 @@ jobs:
           print(f"\n{non_empty}/{len(sport_files)} files have data")
           EOF
 
-      - name: Commit and push to kebu-lite
-        working-directory: kebu-lite
+      - name: Commit and push to target
+        working-directory: target
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
