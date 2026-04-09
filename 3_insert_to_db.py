@@ -252,6 +252,10 @@ dfsess.drop(columns=['name'], inplace=True)
 # if end_date is null, fill with start_date
 dfsess['end_date'] = dfsess['end_date'].fillna(dfsess['start_date'])
 #drop rows where centre_id is null
+_n_missing_centre = dfsess['centre_id'].isnull().sum()
+if _n_missing_centre > 0:
+    _missing_locs = dfsess.loc[dfsess['centre_id'].isnull(), 'centre_id'].unique()
+    print(f"WARNING: {_n_missing_centre} sessions dropped — centre not in DB (likely failed Google Maps lookup): {list(_missing_locs)}")
 dfsess = dfsess[~dfsess['centre_id'].isnull()]
 
 # TODO: need to fill null max age with 999
@@ -331,10 +335,11 @@ if len(existing_barcodes_set) > 0:
         "has_enroll_now",
     ]
 
-    def _norm_for_compare(s, *, as_date: bool = False):
+    def _norm_for_compare(s, *, as_date: bool = False, as_bool: bool = False):
         """
         Normalize values for robust comparisons.
         - For dates: compare by calendar date (YYYY-MM-DD) to avoid timezone/format diffs.
+        - For booleans: normalize to "true"/"false" to avoid True/"True"/1 mismatches.
         - Otherwise: normalize missing to "" and cast to string.
         """
         if not hasattr(s, "fillna"):
@@ -347,15 +352,21 @@ if len(existing_barcodes_set) > 0:
             # NaT -> NaN; fill with "" so NULLs compare equal.
             return dt.dt.strftime("%Y-%m-%d").fillna("")
 
+        if as_bool:
+            return s.fillna(False).apply(lambda v: "true" if v else "false")
+
         return s.fillna("").astype(str)
+
+    _bool_cols = {"has_enroll_now"}
+    _date_cols = {"start_date", "end_date"}
 
     existing_norm = existing_sessions_df[["barcode"] + comp_cols].copy()
     for c in comp_cols:
-        existing_norm[c] = _norm_for_compare(existing_norm[c], as_date=(c in {"start_date", "end_date"}))
+        existing_norm[c] = _norm_for_compare(existing_norm[c], as_date=(c in _date_cols), as_bool=(c in _bool_cols))
 
     new_norm = dfsess_clean[["barcode"] + comp_cols + ["_idx"]].copy()
     for c in comp_cols:
-        new_norm[c] = _norm_for_compare(new_norm[c], as_date=(c in {"start_date", "end_date"}))
+        new_norm[c] = _norm_for_compare(new_norm[c], as_date=(c in _date_cols), as_bool=(c in _bool_cols))
 
     merged = new_norm.merge(existing_norm, on="barcode", how="left", suffixes=("", "_db"))
 
