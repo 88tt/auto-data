@@ -47,7 +47,7 @@ startdate_cutoff = dfcrs['start_date'] >= startdate_cutoff_date  # mask: only cu
 # - additionally include rows that are still actively enrollable
 session_insert_mask = startdate_cutoff | dfcrs["has_enroll_now"].fillna(False)
 
-engine = create_engine(config.DB_URL)
+engine = create_engine(config.DB_URL, pool_pre_ping=True, pool_recycle=300)
 
 ############################################################################################################
 # insert into 'centres' in db
@@ -91,7 +91,8 @@ if len(dfcentres_new) > 0:
     dfcentres_clean = dfcentres_new[["name", "address", "latitude", "longitude", "fullname", "url", "created_at"]][dfcentres_new["address"].notnull()].drop_duplicates()
     to_insert = dfcentres_clean[~dfcentres_clean["name"].isin(existing_names)]
     if len(to_insert) > 0:
-        to_insert.to_sql('activities_centres', con=engine, if_exists='append', index=False)
+        with engine.begin() as conn:
+            to_insert.to_sql('activities_centres', con=conn, if_exists='append', index=False)
         print(f'Inserted {len(to_insert)} new centres.')
 
 
