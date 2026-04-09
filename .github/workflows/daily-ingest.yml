@@ -16,7 +16,7 @@ env:
   CITY: "To"
   CHROME_HEADLESS: "1"
   PYTHONUNBUFFERED: "1"
-  KEBU_LITE_BRANCH: "data/registered-programs"  # merged to main manually when ready for prod
+  TARGET_BRANCH: "data/registered-programs"  # merged to main manually when ready for prod
 
 jobs:
   scrape:
@@ -113,13 +113,13 @@ jobs:
       - name: Checkout kebu-data-prep-registeredTO
         uses: actions/checkout@v4.2.2
 
-      - name: Checkout kebu-lite (${{ env.KEBU_LITE_BRANCH }})
+      - name: Checkout kebu-lite (${{ env.TARGET_BRANCH }})
         uses: actions/checkout@v4.2.2
         with:
-          repository: ${{ secrets.KEBU_LITE_REPO }}
-          ref: ${{ env.KEBU_LITE_BRANCH }}
+          repository: ${{ secrets.TARGET_REPO }}
+          ref: ${{ env.TARGET_BRANCH }}
           path: kebu-lite
-          token: ${{ secrets.KEBU_LITE_TOKEN }}
+          token: ${{ secrets.TARGET_REPO_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5.4.0
