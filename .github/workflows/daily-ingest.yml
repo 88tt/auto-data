@@ -21,6 +21,7 @@ env:
 
 jobs:
   scrape-ingest:
+    if: false  # disabled for export testing
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false  # let other groups continue if one fails
