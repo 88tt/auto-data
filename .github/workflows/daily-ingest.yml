@@ -105,6 +105,16 @@ jobs:
           ACTIVITIES: "CampTO,Early Years,FitnessTO,After School,Adapted Activities"
         run: python 2_clean_data.py && python 3_insert_to_db.py
 
+      - name: Generate combined dfcrs.csv (all activities)
+        run: python 2_clean_data.py
+        # No ACTIVITIES set — defaults to all activities, writes combined dfcrs.csv
+
+      - name: Upload combined dfcrs
+        uses: actions/upload-artifact@v4
+        with:
+          name: dfcrs-combined
+          path: raw_data/
+
   export:
     runs-on: ubuntu-latest
     needs: insert
@@ -130,11 +140,18 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Download combined dfcrs
+        uses: actions/download-artifact@v4
+        with:
+          name: dfcrs-combined
+          path: raw_data/
+
       - name: Export registered JSON to target
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           OUT_DIR: ${{ github.workspace }}/target/public/data/registered
           SCRAPE_RUN: scraped${{ github.run_id }}
+          EXPORT_LATEST_SCRAPE_ONLY: "1"
         run: python 4_db_to_json.py
 
       - name: Validate output files
