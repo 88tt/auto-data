@@ -84,6 +84,12 @@ EXPORT_LATEST_SCRAPE_ONLY = bool(
     os.environ.get("EXPORT_LATEST_SCRAPE_ONLY", str(config.EXPORT_LATEST_SCRAPE_ONLY)).strip().lower()
     in {"1", "true", "t", "yes", "y", "on"}
 )
+# When True, write files directly to OUT_DIR (no CITY/YEAR_AND_SEASON/SCRAPE_RUN subdirs).
+# Used in CI to write flat files that the frontend reads directly.
+FLAT_OUTPUT = bool(
+    os.environ.get("FLAT_OUTPUT", "").strip().lower()
+    in {"1", "true", "t", "yes", "y", "on"}
+)
 
 
 def _time_fmt(t):
@@ -310,8 +316,11 @@ def export_sport_season(engine, keyword, year_and_season, *, allowed_barcodes: s
 
 def main():
     engine = create_engine(DB_URL)
-    # output/<CITY>/<YEAR_AND_SEASON>/<scrape_run>/ e.g. output/To/2026s2To/scraped20260316/
-    season_dir = OUT_DIR / CITY / YEAR_AND_SEASON / SCRAPE_RUN
+    if FLAT_OUTPUT:
+        season_dir = OUT_DIR
+    else:
+        # output/<CITY>/<YEAR_AND_SEASON>/<scrape_run>/ e.g. output/To/2026s2To/scraped20260316/
+        season_dir = OUT_DIR / CITY / YEAR_AND_SEASON / SCRAPE_RUN
     season_dir.mkdir(parents=True, exist_ok=True)
 
     allowed_barcodes: set[str] | None = None
