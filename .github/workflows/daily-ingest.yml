@@ -3,8 +3,9 @@ name: Daily Ingest - Registered Programs
 # Scheduled runs use this workflow file from the default branch only (GitHub requirement).
 on:
   schedule:
-    - cron: "16 9 * * *" # 09:16 America/Toronto
-      timezone: "America/Toronto"
+    # 09:16 Toronto during EDT (Mar–Nov): 13:16 UTC. Winter EST: use "16 14 * * *" instead.
+    # (Plain UTC cron is the most reliable; timezone: on schedule items can fail to register on some setups.)
+    - cron: "16 13 * * *"
   workflow_dispatch:
     inputs:
       year_and_season:
@@ -13,8 +14,8 @@ on:
         default: "2026s2To"
 
 env:
-  # inputs.* is set for workflow_dispatch; scheduled runs use the default below.
-  YEAR_AND_SEASON: ${{ inputs.year_and_season || '2026s2To' }}
+  # Documented pattern for workflow_dispatch + schedule (inputs empty on schedule).
+  YEAR_AND_SEASON: ${{ github.event.inputs.year_and_season || '2026s2To' }}
   STARTDATE_CUTOFF: "2026-03-01"
   CITY: "To"
   CHROME_HEADLESS: "1"
