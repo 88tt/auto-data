@@ -19,6 +19,11 @@ Usage:
   Output: output/<CITY>/<YEAR_AND_SEASON>/<scrape_run>/ (e.g. output/To/2026s2To/scraped20260316/). Sport files contain:
   { "series", "courseNames", "sessionsWithCourses", "businessLocations" }
 
+  After export, writes season-level index files next to the scrape run folder:
+  - output/<CITY>/<YEAR_AND_SEASON>/scrape-index.json — lists all scraped*/ dirs and "latest" (highest scraped<number>)
+  - output/<CITY>/<YEAR_AND_SEASON>/latest.json — { "scrapeFolder": "<latest>" } for older frontends
+  Copy these with public/data when deploying so the SPA can resolve the newest scrape without manual edits.
+
 To run:
 ```
 python 4_db_to_json.py
@@ -112,6 +117,43 @@ def _sanitize_json_value(obj):
         except Exception:
             pass
     return obj
+
+
+def _scrape_folder_sort_key(name: str) -> tuple:
+    """Sort scraped* folders: scraped<N> by integer N, else lexicographic after 'scraped'."""
+    if name.startswith("scraped"):
+        rest = name[len("scraped") :]
+        if rest.isdigit():
+            return (0, int(rest))
+        return (1, rest)
+    return (2, name)
+
+
+def write_season_scrape_index(season_parent: Path) -> None:
+    """
+    Discover sibling scraped*/ directories under season_parent, pick the newest by
+    _scrape_folder_sort_key, and write scrape-index.json + latest.json for the static app.
+    """
+    if not season_parent.is_dir():
+        return
+    folders = [
+        p.name
+        for p in season_parent.iterdir()
+        if p.is_dir() and p.name.startswith("scraped")
+    ]
+    folders.sort(key=_scrape_folder_sort_key)
+    if not folders:
+        return
+    latest = max(folders, key=_scrape_folder_sort_key)
+    idx = {"scrapeFolders": folders, "latest": latest}
+    idx_path = season_parent / "scrape-index.json"
+    with open(idx_path, "w", encoding="utf-8") as f:
+        json.dump(idx, f, indent=2, allow_nan=False)
+    print(f"Wrote {idx_path} (latest={latest})")
+    latest_path = season_parent / "latest.json"
+    with open(latest_path, "w", encoding="utf-8") as f:
+        json.dump({"scrapeFolder": latest}, f, indent=2, allow_nan=False)
+    print(f"Wrote {latest_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -474,6 +516,9 @@ def main():
     with open(season_dir / "manifest.json", "w", encoding="utf-8") as f:
         json.dump(_sanitize_json_value(manifest), f, indent=2, allow_nan=False)
     print(f"Wrote {season_dir / 'manifest.json'}")
+
+    season_parent = OUT_DIR / CITY / YEAR_AND_SEASON
+    write_season_scrape_index(season_parent)
 
 
 if __name__ == "__main__":
