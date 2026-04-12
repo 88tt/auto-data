@@ -11,6 +11,10 @@ on:
         description: "Season identifier (e.g. 2026s2To)"
         required: false
         default: "2026s2To"
+      export_only:
+        description: "Skip scrape + insert; export from DB only"
+        type: boolean
+        default: false
 
 env:
   # Documented pattern for workflow_dispatch + schedule (inputs empty on schedule).
@@ -24,6 +28,7 @@ env:
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.export_only != 'true' }}
     strategy:
       fail-fast: false  # let other groups continue if one fails
       matrix:
@@ -62,6 +67,7 @@ jobs:
   insert:
     runs-on: ubuntu-latest
     needs: scrape
+    if: ${{ github.event.inputs.export_only != 'true' }}
 
     steps:
       - name: Checkout
@@ -120,7 +126,8 @@ jobs:
 
   export:
     runs-on: ubuntu-latest
-    needs: insert
+    needs: [scrape, insert]
+    if: always() && (needs.insert.result == 'success' || needs.insert.result == 'skipped')
 
     steps:
       - name: Checkout this repo
@@ -144,6 +151,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Download combined dfcrs
+        if: ${{ github.event.inputs.export_only != 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: dfcrs-combined
