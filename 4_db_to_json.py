@@ -169,51 +169,82 @@ def _dt_fmt(dt):
     return str(dt)
 
 
-def _build_latest_allowed_barcodes() -> set[str] | None:
+def _build_latest_allowed_barcodes(engine=None) -> set[str] | None:
     """
-    Return allowed session barcodes from latest scrape dfcrs.csv.
-    Matches insert scope in 3_insert_to_db.py: start_date >= STARTDATE_CUTOFF OR has_enroll_now.
-    Returns None when filtering should be skipped (missing/invalid source CSV).
+    Return allowed session barcodes from the latest scrape.
+
+    Primary source: dfcrs.csv produced by the current scrape run.
+    Fallback (export_only mode): query the DB for all barcodes whose updated_at
+    matches the most recent scrape date — no user input, parameterless query.
+
+    Returns None only when both sources are unavailable (triggers full-season export).
     """
     dfcrs_path = Path(config.season) / "dfcrs.csv"
-    if not dfcrs_path.exists():
-        print(f"Warning: latest-scrape filter requested but missing {dfcrs_path}; exporting full season.")
+    if dfcrs_path.exists():
+        try:
+            df = pd.read_csv(dfcrs_path)
+        except Exception as e:
+            print(f"Warning: could not read {dfcrs_path} ({e}); trying DB fallback.")
+            df = None
+    else:
+        df = None
+
+    if df is not None:
+        needed_cols = {"program", "Course Number", "start_date"}
+        missing = needed_cols - set(df.columns)
+        if missing:
+            print(
+                "Warning: dfcrs is missing columns "
+                f"{sorted(missing)}; trying DB fallback."
+            )
+            df = None
+
+    if df is not None:
+        cutoff = pd.Timestamp(config.STARTDATE_CUTOFF)
+        work = df[["program", "Course Number", "start_date"]].copy()
+        work["start_date"] = pd.to_datetime(work["start_date"], errors="coerce")
+        if "has_enroll_now" in df.columns:
+            _truthy = {"1", "true", "t", "yes", "y"}
+            enroll = df["has_enroll_now"].fillna(False).apply(
+                lambda v: str(v).strip().lower() in _truthy if not isinstance(v, bool) else v
+            )
+            work["has_enroll_now"] = enroll.values
+        else:
+            work["has_enroll_now"] = False
+        in_scope = (work["start_date"] >= cutoff) | work["has_enroll_now"]
+        work = work[in_scope]
+        work = work.dropna(subset=["program", "Course Number"])
+        work["Course Number"] = work["Course Number"].astype(str).str.replace("#", "", regex=False).str.strip()
+        work["program"] = work["program"].astype(str)
+        work = work[work["Course Number"] != ""]
+        barcodes = set((work["program"] + config.pk_prefix + work["Course Number"]).tolist())
+        print(f"Loaded {len(barcodes)} allowed barcodes from dfcrs.csv")
+        return barcodes
+
+    # Fallback: derive latest scrape from DB updated_at (used in export_only mode).
+    if engine is None:
+        print("Warning: no dfcrs.csv and no DB engine available; exporting full season.")
         return None
 
     try:
-        df = pd.read_csv(dfcrs_path)
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT barcode
+                    FROM activities_sessions
+                    WHERE updated_at::date = (
+                        SELECT MAX(updated_at)::date FROM activities_sessions
+                    )
+                    """
+                )
+            ).fetchall()
+        barcodes = {r[0] for r in rows}
+        print(f"Loaded {len(barcodes)} allowed barcodes from DB (latest updated_at date)")
+        return barcodes if barcodes else None
     except Exception as e:
-        print(f"Warning: could not read {dfcrs_path} ({e}); exporting full season.")
+        print(f"Warning: DB fallback failed ({e}); exporting full season.")
         return None
-
-    needed_cols = {"program", "Course Number", "start_date"}
-    missing = needed_cols - set(df.columns)
-    if missing:
-        print(
-            "Warning: latest-scrape filter requested but dfcrs is missing columns "
-            f"{sorted(missing)}; exporting full season."
-        )
-        return None
-
-    cutoff = pd.Timestamp(config.STARTDATE_CUTOFF)
-    work = df[["program", "Course Number", "start_date"]].copy()
-    work["start_date"] = pd.to_datetime(work["start_date"], errors="coerce")
-    if "has_enroll_now" in df.columns:
-        _truthy = {"1", "true", "t", "yes", "y"}
-        enroll = df["has_enroll_now"].fillna(False).apply(
-            lambda v: str(v).strip().lower() in _truthy if not isinstance(v, bool) else v
-        )
-        work["has_enroll_now"] = enroll.values
-    else:
-        work["has_enroll_now"] = False
-    in_scope = (work["start_date"] >= cutoff) | work["has_enroll_now"]
-    work = work[in_scope]
-    work = work.dropna(subset=["program", "Course Number"])
-    work["Course Number"] = work["Course Number"].astype(str).str.replace("#", "", regex=False).str.strip()
-    work["program"] = work["program"].astype(str)
-    work = work[work["Course Number"] != ""]
-
-    return set((work["program"] + config.pk_prefix + work["Course Number"]).tolist())
 
 
 def export_series(engine, keyword, year_and_season, *, allowed_series_ids: set[str] | None = None):
@@ -379,15 +410,12 @@ def main():
 
     allowed_barcodes: set[str] | None = None
     if EXPORT_LATEST_SCRAPE_ONLY:
-        allowed_barcodes = _build_latest_allowed_barcodes()
+        allowed_barcodes = _build_latest_allowed_barcodes(engine)
     print(
         f"Export mode: latest scrape only = {bool(EXPORT_LATEST_SCRAPE_ONLY and allowed_barcodes is not None)}"
     )
-    if EXPORT_LATEST_SCRAPE_ONLY:
-        if allowed_barcodes is None:
-            print("Latest-scrape-only requested, but filter source unavailable. Falling back to full-season export.")
-        else:
-            print(f"Loaded {len(allowed_barcodes)} allowed barcodes from latest scrape dfcrs.csv")
+    if EXPORT_LATEST_SCRAPE_ONLY and allowed_barcodes is None:
+        print("Latest-scrape-only requested, but no filter source available. Falling back to full-season export.")
 
     # Export programs_desc.csv to programs.json if the CSV exists
     programs_count = 0
