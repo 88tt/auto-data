@@ -99,12 +99,12 @@ def _time_fmt(t):
 
 
 def _dt_fmt(dt):
-    """Format as plain YYYY-MM-DD (consistent across local Postgres and Neon)."""
+    """ISO format for dates (frontend can parse)."""
     if dt is None or pd.isna(dt):
         return None
     if isinstance(dt, (datetime, pd.Timestamp)):
-        return dt.strftime("%Y-%m-%d")
-    return str(dt)[:10]  # trim any timestamp suffix if returned as string
+        return dt.isoformat()
+    return str(dt)
 
 
 def _build_latest_allowed_barcodes() -> set[str] | None:
