@@ -417,6 +417,27 @@ if len(existing_barcodes_set) > 0:
             )
         print(f"Updated {len(to_update)} existing sessions.")
 
+# Stamp last_seen_at = NOW() for every barcode present in this scrape.
+# This column tracks "when was this session last observed", independent of whether
+# its data changed (updated_at). Used by export_only mode to identify the latest scrape.
+seen_barcodes = dfsess_clean["barcode"].tolist()
+with engine.begin() as conn:
+    conn.execute(
+        text(
+            "ALTER TABLE activities_sessions "
+            "ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ"
+        )
+    )
+    conn.execute(
+        text(
+            "UPDATE activities_sessions "
+            "SET last_seen_at = NOW() "
+            "WHERE barcode = ANY(:barcodes)"
+        ),
+        {"barcodes": seen_barcodes},
+    )
+print(f"Stamped last_seen_at for {len(seen_barcodes)} seen sessions.")
+
 
 ############################################################################################################
 # insert into 'series' in db

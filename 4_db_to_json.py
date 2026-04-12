@@ -174,7 +174,7 @@ def _build_latest_allowed_barcodes(engine=None) -> set[str] | None:
     Return allowed session barcodes from the latest scrape.
 
     Primary source: dfcrs.csv produced by the current scrape run.
-    Fallback (export_only mode): query the DB for all barcodes whose updated_at
+    Fallback (export_only mode): query the DB for all barcodes whose last_seen_at
     matches the most recent scrape date — no user input, parameterless query.
 
     Returns None only when both sources are unavailable (triggers full-season export).
@@ -233,14 +233,14 @@ def _build_latest_allowed_barcodes(engine=None) -> set[str] | None:
                     """
                     SELECT barcode
                     FROM activities_sessions
-                    WHERE updated_at::date = (
-                        SELECT MAX(updated_at)::date FROM activities_sessions
+                    WHERE last_seen_at::date = (
+                        SELECT MAX(last_seen_at)::date FROM activities_sessions
                     )
                     """
                 )
             ).fetchall()
         barcodes = {r[0] for r in rows}
-        print(f"Loaded {len(barcodes)} allowed barcodes from DB (latest updated_at date)")
+        print(f"Loaded {len(barcodes)} allowed barcodes from DB (latest last_seen_at date)")
         return barcodes if barcodes else None
     except Exception as e:
         print(f"Warning: DB fallback failed ({e}); exporting full season.")
