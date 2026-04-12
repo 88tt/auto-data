@@ -45,6 +45,9 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 
 
+# Script 4 (4_db_to_json.py): default OUT_DIR is ../kebu-lite/public/data when that path exists;
+# otherwise ./output. Override with env OUT_DIR. Writes flat JSON (latest export only).
+
 # Script 4 export behavior:
 # - False (default): export all sessions in DB matching season pattern.
 # - True: export only sessions present in latest scrape run (config.season/dfcrs.csv).

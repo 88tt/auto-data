@@ -4,7 +4,7 @@ Output shape matches the API responses so the React app can switch from fetch(ap
 to fetch(static JSON) with minimal changes.
 
 Usage:
-  Set SPORTS (or use env) for which programs to export. CITY and YEAR_AND_SEASON come from config.
+  Set SPORTS (or use env) for which programs to export. YEAR_AND_SEASON comes from config.
   python 4_db_to_json.py
 
   Optional latest-scrape-only export (keep all sessions in DB, but export only sessions
@@ -15,14 +15,10 @@ Usage:
   When enabled, missing/invalid latest dfcrs.csv will fall back to full-season export.
 
   Writes one file per (sport, yearAndSeason): e.g. Arts_2026s2To.json
-  Also writes programs.json from programs_desc.csv if PROGRAMS_CSV path exists.
-  Output: output/<CITY>/<YEAR_AND_SEASON>/<scrape_run>/ (e.g. output/To/2026s2To/scraped20260316/). Sport files contain:
+  Also writes programs.json, centre_programs.json, manifest.json, export_counts.json.
+  Default output directory is a sibling ../kebu-lite/public/data (flat — latest data only).
+  Override with OUT_DIR=/path/to/public/data. Sport files contain:
   { "series", "courseNames", "sessionsWithCourses", "businessLocations" }
-
-  After export, writes season-level index files next to the scrape run folder:
-  - output/<CITY>/<YEAR_AND_SEASON>/scrape-index.json — lists all scraped*/ dirs and "latest" (highest scraped<number>)
-  - output/<CITY>/<YEAR_AND_SEASON>/latest.json — { "scrapeFolder": "<latest>" } for older frontends
-  Copy these with public/data when deploying so the SPA can resolve the newest scrape without manual edits.
 
 To run:
 ```
@@ -119,48 +115,10 @@ def _sanitize_json_value(obj):
     return obj
 
 
-def _scrape_folder_sort_key(name: str) -> tuple:
-    """Sort scraped* folders: scraped<N> by integer N, else lexicographic after 'scraped'."""
-    if name.startswith("scraped"):
-        rest = name[len("scraped") :]
-        if rest.isdigit():
-            return (0, int(rest))
-        return (1, rest)
-    return (2, name)
-
-
-def write_season_scrape_index(season_parent: Path) -> None:
-    """
-    Discover sibling scraped*/ directories under season_parent, pick the newest by
-    _scrape_folder_sort_key, and write scrape-index.json + latest.json for the static app.
-    """
-    if not season_parent.is_dir():
-        return
-    folders = [
-        p.name
-        for p in season_parent.iterdir()
-        if p.is_dir() and p.name.startswith("scraped")
-    ]
-    folders.sort(key=_scrape_folder_sort_key)
-    if not folders:
-        return
-    latest = max(folders, key=_scrape_folder_sort_key)
-    idx = {"scrapeFolders": folders, "latest": latest}
-    idx_path = season_parent / "scrape-index.json"
-    with open(idx_path, "w", encoding="utf-8") as f:
-        json.dump(idx, f, indent=2, allow_nan=False)
-    print(f"Wrote {idx_path} (latest={latest})")
-    latest_path = season_parent / "latest.json"
-    with open(latest_path, "w", encoding="utf-8") as f:
-        json.dump({"scrapeFolder": latest}, f, indent=2, allow_nan=False)
-    print(f"Wrote {latest_path}")
-
-
 # ---------------------------------------------------------------------------
 # Config (from config.py; override via env or edit config)
 # ---------------------------------------------------------------------------
 DB_URL = os.environ.get("DB_URL", config.DB_URL)
-CITY = os.environ.get("CITY", config.CITY)
 YEAR_AND_SEASON = os.environ.get("YEAR_AND_SEASON", config.YEAR_AND_SEASON)
 # Programs to export. Override with env SPORTS (comma-separated).
 SPORTS = [
@@ -171,14 +129,14 @@ SPORTS = [
     ).split(",")
     if s.strip()
 ]
-# Directory to write JSON files: output/<CITY>/<YEAR_AND_SEASON>/<scrape_run>/
+# Flat directory for static JSON (default: sibling kebu-lite/public/data).
 try:
     _project_dir = Path(__file__).resolve().parent
 except NameError:
     _project_dir = Path(os.getcwd()).resolve()
-OUT_DIR = Path(os.environ.get("OUT_DIR", _project_dir / "output"))
-# Scrape run subfolder (e.g. scraped20260408). Set SCRAPE_RUN env var in CI (export job has no raw_data).
-SCRAPE_RUN = os.environ.get("SCRAPE_RUN", os.path.basename(config.season))
+_sibling_public_data = _project_dir.parent / "kebu-lite" / "public" / "data"
+_default_out = _sibling_public_data if _sibling_public_data.is_dir() else (_project_dir / "output")
+OUT_DIR = Path(os.environ.get("OUT_DIR", _default_out))
 # Path to programs_desc.csv (optional); if present, exported as programs.json (in same scrape run as config.season).
 PROGRAMS_CSV = os.environ.get(
     "PROGRAMS_CSV",
@@ -414,9 +372,10 @@ def export_sport_season(engine, keyword, year_and_season, *, allowed_barcodes: s
 
 def main():
     engine = create_engine(DB_URL)
-    # output/<CITY>/<YEAR_AND_SEASON>/<scrape_run>/ e.g. output/To/2026s2To/scraped20260316/
-    season_dir = OUT_DIR / CITY / YEAR_AND_SEASON / SCRAPE_RUN
+    # Single flat folder (e.g. kebu-lite/public/data): latest export overwrites sport JSON files.
+    season_dir = OUT_DIR
     season_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Export OUT_DIR={season_dir.resolve()}")
 
     allowed_barcodes: set[str] | None = None
     if EXPORT_LATEST_SCRAPE_ONLY:
@@ -516,9 +475,6 @@ def main():
     with open(season_dir / "manifest.json", "w", encoding="utf-8") as f:
         json.dump(_sanitize_json_value(manifest), f, indent=2, allow_nan=False)
     print(f"Wrote {season_dir / 'manifest.json'}")
-
-    season_parent = OUT_DIR / CITY / YEAR_AND_SEASON
-    write_season_scrape_index(season_parent)
 
 
 if __name__ == "__main__":
