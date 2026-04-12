@@ -3,7 +3,7 @@ name: Daily Ingest - Registered Programs
 # Scheduled runs use this workflow file from the default branch only (GitHub requirement).
 on:
   schedule:
-    - cron: "0 9 * * *"
+    - cron: "16 9 * * *" # 09:16 America/Toronto
       timezone: "America/Toronto"
   workflow_dispatch:
     inputs:
