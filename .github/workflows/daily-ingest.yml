@@ -178,7 +178,10 @@ jobs:
           for path in sorted(sport_files):
               try:
                   data = json.load(open(path))
-                  count = len(data.get("sessionsWithCourses", []))
+                  if isinstance(data, list):
+                      count = len(data)
+                  else:
+                      count = len(data.get("sessionsWithCourses", []))
                   status = f"{count} sessions" if count > 0 else "empty (not yet scraped)"
                   print(f"{os.path.relpath(path)}: {status}")
                   if count > 0:
