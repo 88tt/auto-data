@@ -16,7 +16,7 @@ env:
   CITY: "To"
   CHROME_HEADLESS: "1"
   PYTHONUNBUFFERED: "1"
-  TARGET_BRANCH: "main"
+  TARGET_BRANCH: "data/registered-programs"  # merged to main manually when ready for prod
 
 jobs:
   scrape:
@@ -149,29 +149,28 @@ jobs:
       - name: Export registered JSON to target
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          OUT_DIR: ${{ github.workspace }}/target/public/data
+          OUT_DIR: ${{ github.workspace }}/target/public/data/registered
           SCRAPE_RUN: scraped${{ github.run_id }}
           EXPORT_LATEST_SCRAPE_ONLY: "1"
-          FLAT_OUTPUT: "1"
         run: python 4_db_to_json.py
 
       - name: Validate output files
         run: |
           python - <<'EOF'
-          import json, sys, os, glob
+          import json, sys, os
 
           errors = []
-          data_dir = "target/public/data"
+          registered_dir = "target/public/data/registered"
 
           skip = {"manifest.json", "export_counts.json", "centre_programs.json", "programs.json"}
-          sport_files = [
-              f for f in glob.glob(os.path.join(data_dir, "*.json"))
-              if os.path.basename(f) not in skip
-              and "_2026s2To.json" in f
-          ]
+          sport_files = []
+          for root, dirs, files in os.walk(registered_dir):
+              for f in files:
+                  if f.endswith(".json") and f not in skip:
+                      sport_files.append(os.path.join(root, f))
 
           if not sport_files:
-              errors.append(f"No sport JSON files found under {data_dir}")
+              errors.append(f"No sport JSON files found under {registered_dir}")
           non_empty = 0
           for path in sorted(sport_files):
               try:
@@ -201,7 +200,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add public/data/
+          git add public/data/registered/
           if git diff --cached --quiet; then
             echo "No changes to registered data — skipping commit"
           else
