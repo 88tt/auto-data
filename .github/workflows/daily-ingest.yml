@@ -160,36 +160,34 @@ jobs:
       - name: Validate output files
         run: |
           python - <<'EOF'
-          import json, sys, os
+          import glob, json, os, sys
 
-          errors = []
+          season = os.environ["YEAR_AND_SEASON"]
           data_dir = "target/public/data"
 
-          skip = {"manifest.json", "export_counts.json", "centre_programs.json", "programs.json"}
-          sport_files = []
-          for root, dirs, files in os.walk(data_dir):
-              for f in files:
-                  if f.endswith(".json") and f not in skip:
-                      sport_files.append(os.path.join(root, f))
+          # Only validate sport-season files — pattern-matched, not skip-listed.
+          sport_files = sorted(glob.glob(os.path.join(data_dir, f"*_{season}.json")))
 
+          errors = []
           if not sport_files:
-              errors.append(f"No sport JSON files found under {data_dir}")
+              errors.append(f"No sport JSON files found matching *_{season}.json under {data_dir}")
+
           non_empty = 0
-          for path in sorted(sport_files):
+          for path in sport_files:
               try:
                   data = json.load(open(path))
-                  if isinstance(data, list):
-                      count = len(data)
-                  else:
-                      count = len(data.get("sessionsWithCourses", []))
-                  status = f"{count} sessions" if count > 0 else "empty (not yet scraped)"
+                  if not isinstance(data, dict) or "sessionsWithCourses" not in data:
+                      errors.append(f"{path}: unexpected format (expected dict with sessionsWithCourses)")
+                      continue
+                  count = len(data["sessionsWithCourses"])
+                  status = f"{count} sessions" if count > 0 else "empty"
                   print(f"{os.path.relpath(path)}: {status}")
                   if count > 0:
                       non_empty += 1
               except json.JSONDecodeError as e:
                   errors.append(f"{path}: invalid JSON — {e}")
 
-          if non_empty == 0:
+          if sport_files and non_empty == 0:
               errors.append("All sport files are empty — scrape likely failed")
 
           if errors:
