@@ -30,6 +30,7 @@ EXPORT_LATEST_SCRAPE_ONLY=1 python 4_db_to_json.py
 """
 
 import json
+import math
 import os
 import re
 from datetime import datetime, date, time
@@ -50,6 +51,67 @@ def _json_serial(obj):
     if pd.isna(obj):
         return None
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _is_missing(val) -> bool:
+    """True for None, pandas/NumPy NA, or float nan/inf (invalid in strict JSON)."""
+    if val is None:
+        return True
+    try:
+        if pd.isna(val):
+            return True
+    except TypeError:
+        pass
+    if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+        return True
+    return False
+
+
+def _str_or_none(val):
+    """DB/pandas string fields: missing -> None (never NaN in JSON)."""
+    if _is_missing(val):
+        return None
+    s = str(val).strip()
+    return s if s else None
+
+
+def _float_or_none(val):
+    """Latitude/longitude/ages: missing or non-finite -> None."""
+    if _is_missing(val):
+        return None
+    x = float(val)
+    if math.isnan(x) or math.isinf(x):
+        return None
+    return x
+
+
+def _sanitize_json_value(obj):
+    """
+    Recursively replace NaN/inf and pandas NA so json.dump(..., allow_nan=False) works.
+    Python's json encodes float('nan') as invalid JSON unless allow_nan=True (default).
+    """
+    if isinstance(obj, (datetime, date, time)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_json_value(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_json_value(v) for v in obj]
+    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    try:
+        if pd.isna(obj) and not isinstance(obj, (bool, type(None))):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if hasattr(obj, "item") and callable(getattr(obj, "item", None)):
+        try:
+            v = obj.item()
+            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                return None
+            return v
+        except Exception:
+            pass
+    return obj
 
 
 # ---------------------------------------------------------------------------
@@ -231,24 +293,24 @@ def export_sessions_with_courses(engine, keyword, year_and_season, *, allowed_ba
             "end_time": _time_fmt(r["end_time"]),
             "start_date": _dt_fmt(r["start_date"]),
             "end_date": _dt_fmt(r["end_date"]),
-            "min_age": float(r["min_age"]) if r["min_age"] is not None else None,
-            "max_age": float(r["max_age"]) if r["max_age"] is not None else None,
-            "session_url": r["session_url"],
+            "min_age": _float_or_none(r["min_age"]),
+            "max_age": _float_or_none(r["max_age"]),
+            "session_url": _str_or_none(r["session_url"]),
             "availability": (
                 str(r["availability"]).strip()
                 if pd.notna(r["availability"]) and str(r["availability"]).strip()
                 else "open"
             ),
             "has_enroll_now": bool(r["has_enroll_now"]) if pd.notna(r["has_enroll_now"]) else False,
-            "crs_name_detailed": r["crs_name_detailed"],
-            "crs_name": r["crs_name"],
-            "desc": r["description"],
-            "crs_fam": r["crs_fam"],
-            "centre": r["centre"],
-            "latitude": float(r["latitude"]) if r["latitude"] is not None else None,
-            "longitude": float(r["longitude"]) if r["longitude"] is not None else None,
-            "address": r["address"],
-            "centre_url": r["centre_url"],
+            "crs_name_detailed": _str_or_none(r["crs_name_detailed"]),
+            "crs_name": _str_or_none(r["crs_name"]),
+            "desc": _str_or_none(r["description"]),
+            "crs_fam": _str_or_none(r["crs_fam"]),
+            "centre": _str_or_none(r["centre"]),
+            "latitude": _float_or_none(r["latitude"]),
+            "longitude": _float_or_none(r["longitude"]),
+            "address": _str_or_none(r["address"]),
+            "centre_url": _str_or_none(r["centre_url"]),
         })
     return rows
 
@@ -331,10 +393,10 @@ def main():
     programs_csv = Path(PROGRAMS_CSV)
     if programs_csv.exists():
         df = pd.read_csv(programs_csv)
-        programs = df.to_dict(orient="records")
+        programs = _sanitize_json_value(df.to_dict(orient="records"))
         programs_count = len(programs)
         with open(season_dir / "programs.json", "w", encoding="utf-8") as f:
-            json.dump(programs, f, indent=2, ensure_ascii=False)
+            json.dump(programs, f, indent=2, ensure_ascii=False, allow_nan=False)
         print(f"Wrote {season_dir / 'programs.json'} ({programs_count} programs)")
     else:
         print(f"Note: programs_desc not found at {programs_csv}, skipping programs.json")
@@ -352,8 +414,16 @@ def main():
         # Sanitize for filename: slash would create a subdirectory (e.g. "Ski/Snowboard -" -> "Ski-Snowboard -")
         sport_safe = sport.replace("/", "-")
         out_path = season_dir / f"{sport_safe}_{YEAR_AND_SEASON}.json"
+        payload = _sanitize_json_value(payload)
         with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, ensure_ascii=False, default=_json_serial)
+            json.dump(
+                payload,
+                f,
+                indent=2,
+                ensure_ascii=False,
+                default=_json_serial,
+                allow_nan=False,
+            )
         counts = {
             "program": sport,
             "series": len(payload["series"]),
@@ -376,20 +446,23 @@ def main():
     # Write centre_programs.json — small index used by frontend activity selector
     centre_programs_path = season_dir / "centre_programs.json"
     with open(centre_programs_path, "w", encoding="utf-8") as f:
-        json.dump(centre_programs, f, indent=2, ensure_ascii=False)
+        json.dump(_sanitize_json_value(centre_programs), f, indent=2, ensure_ascii=False, allow_nan=False)
     print(f"Wrote {centre_programs_path} ({len(centre_programs)} centres)")
 
     # Save export record counts to file
     counts_path = season_dir / "export_counts.json"
     with open(counts_path, "w", encoding="utf-8") as f:
         json.dump(
-            {
-                "yearAndSeason": YEAR_AND_SEASON,
-                "programs": programs_count,
-                "counts": export_counts,
-            },
+            _sanitize_json_value(
+                {
+                    "yearAndSeason": YEAR_AND_SEASON,
+                    "programs": programs_count,
+                    "counts": export_counts,
+                }
+            ),
             f,
             indent=2,
+            allow_nan=False,
         )
     print(f"Wrote {counts_path}")
 
@@ -399,7 +472,7 @@ def main():
         "sports": [s.strip() for s in SPORTS],
     }
     with open(season_dir / "manifest.json", "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
+        json.dump(_sanitize_json_value(manifest), f, indent=2, allow_nan=False)
     print(f"Wrote {season_dir / 'manifest.json'}")
 
 
