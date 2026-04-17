@@ -166,45 +166,157 @@ jobs:
         run: python 4_db_to_json.py
 
       - name: Validate output files
+        env:
+          SCRAPE_RESULT: ${{ needs.scrape.result }}
+          INSERT_RESULT: ${{ needs.insert.result }}
         run: |
           python - <<'EOF'
           import glob, json, os, sys
+          from collections import defaultdict
+          from datetime import datetime, timezone
 
-          season = os.environ["YEAR_AND_SEASON"]
-          data_dir = "target/public/data"
+          season        = os.environ["YEAR_AND_SEASON"]
+          data_dir      = "target/public/data"
+          summary_path  = os.environ.get("GITHUB_STEP_SUMMARY", "")
+          run_id        = os.environ.get("GITHUB_RUN_ID", "local")
+          repo          = os.environ.get("GITHUB_REPOSITORY", "")
+          run_url       = f"https://github.com/{repo}/actions/runs/{run_id}" if repo else ""
+          now_str       = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+          scrape_result = os.environ.get("SCRAPE_RESULT", "skipped")
+          insert_result = os.environ.get("INSERT_RESULT", "skipped")
 
-          # Only validate sport-season files — pattern-matched, not skip-listed.
+          # ── 1. Load insert summary (found vs saved per series) ────────────────
+          insert_summary = []
+          for p in glob.glob("raw_data/**/insert_summary.json", recursive=True):
+              try:
+                  insert_summary = json.load(open(p))
+                  print(f"Loaded insert summary: {p}")
+                  break
+              except Exception:
+                  pass
+
+          # ── 2. Validate exported JSON files ───────────────────────────────────
           sport_files = sorted(glob.glob(os.path.join(data_dir, f"*_{season}.json")))
-
           errors = []
           if not sport_files:
               errors.append(f"No sport JSON files found matching *_{season}.json under {data_dir}")
 
+          export_rows = []                     # (sport, count, no_loc_count)
+          no_loc_by_centre = defaultdict(list) # (sport, centre) -> [session_nums]
+          total_sessions = 0
           non_empty = 0
+
           for path in sport_files:
+              sport = os.path.basename(path).replace(f"_{season}.json", "")
               try:
                   data = json.load(open(path))
                   if not isinstance(data, dict) or "sessionsWithCourses" not in data:
-                      errors.append(f"{path}: unexpected format (expected dict with sessionsWithCourses)")
+                      errors.append(f"{os.path.relpath(path)}: unexpected format")
                       continue
-                  count = len(data["sessionsWithCourses"])
-                  status = f"{count} sessions" if count > 0 else "empty"
-                  print(f"{os.path.relpath(path)}: {status}")
+                  sessions = data["sessionsWithCourses"]
+                  count = len(sessions)
+                  total_sessions += count
                   if count > 0:
                       non_empty += 1
+                  no_loc = [s for s in sessions if s.get("latitude") is None or s.get("longitude") is None]
+                  for s in no_loc:
+                      barcode  = s.get("barcode", "")
+                      sess_num = barcode.split("_%_")[-1] if "_%_" in barcode else barcode
+                      centre   = s.get("centre") or "(no centre)"
+                      no_loc_by_centre[(sport, centre)].append(sess_num)
+                  export_rows.append((sport, count, len(no_loc)))
+                  print(f"{os.path.relpath(path)}: {count} sessions, {len(no_loc)} no-location")
               except json.JSONDecodeError as e:
-                  errors.append(f"{path}: invalid JSON — {e}")
+                  errors.append(f"{os.path.relpath(path)}: invalid JSON — {e}")
 
           if sport_files and non_empty == 0:
               errors.append("All sport files are empty — scrape likely failed")
 
+          total_no_loc = sum(r[2] for r in export_rows)
+
+          # ── 3. Write $GITHUB_STEP_SUMMARY ─────────────────────────────────────
+          if summary_path:
+              overall  = "✅ Passed" if not errors else "❌ Failed"
+              run_link = f"[{run_id}]({run_url})" if run_url else run_id
+              L = [
+                  f"# Daily Ingest — {overall}",
+                  f"**Season:** `{season}` | **Run:** {run_link} | **Time:** {now_str}",
+                  "",
+                  "## Job Status",
+                  "",
+                  "| Job | Result |",
+                  "|-----|--------|",
+                  f"| Scrape | {scrape_result} |",
+                  f"| Insert | {insert_result} |",
+                  f"| Export | {'✅ success' if not errors else '❌ failed'} |",
+                  "",
+              ]
+
+              if insert_summary:
+                  total_found   = sum(r["found"]           for r in insert_summary)
+                  total_saved   = sum(r["saved"]           for r in insert_summary)
+                  total_dropped = sum(r.get("dropped", 0)  for r in insert_summary)
+                  drop_flag = " ⚠️" if total_dropped > 0 else ""
+                  L += [
+                      "## Insert: Found vs Saved",
+                      "",
+                      f"**Total:** {total_found} found → {total_saved} saved{drop_flag}",
+                      "",
+                      "<details><summary>Per-series breakdown</summary>",
+                      "",
+                      "| Program | Series | Found | Saved | Dropped |",
+                      "|---------|--------|------:|------:|--------:|",
+                  ]
+                  for r in insert_summary:
+                      dropped = r.get("dropped", 0)
+                      warn = " ⚠️" if dropped > 0 else ""
+                      L.append(f"| {r['program']} | {r['series']} | {r['found']} | {r['saved']} | {dropped}{warn} |")
+                  L += ["</details>", ""]
+              else:
+                  L += ["## Insert: Found vs Saved", "", "_Not available (export-only or insert skipped)_", ""]
+
+              L += [
+                  "## Export Results",
+                  "",
+                  "| Sport | Sessions | No Location |",
+                  "|-------|:--------:|:-----------:|",
+              ]
+              for sport, count, no_loc in export_rows:
+                  flag = " ⚠️" if no_loc > 0 else ""
+                  L.append(f"| {sport} | {count} | {no_loc}{flag} |")
+              L += [f"| **Total** | **{total_sessions}** | **{total_no_loc}** |", ""]
+
+              if no_loc_by_centre:
+                  L += [
+                      f"## ⚠️ Sessions Without Location ({total_no_loc} sessions)",
+                      "",
+                      "| Sport | Centre | # | Session Numbers |",
+                      "|-------|--------|--:|-----------------|",
+                  ]
+                  for (sport, centre), sess_nums in sorted(no_loc_by_centre.items()):
+                      nums_str = ", ".join(f"`{n}`" for n in sess_nums[:15])
+                      if len(sess_nums) > 15:
+                          nums_str += f" … +{len(sess_nums) - 15} more"
+                      L.append(f"| {sport} | {centre} | {len(sess_nums)} | {nums_str} |")
+                  L.append("")
+
+              if errors:
+                  L += ["## ❌ Validation Errors", ""]
+                  for e in errors:
+                      L.append(f"- {e}")
+                  L.append("")
+
+              with open(summary_path, "w") as f:
+                  f.write("\n".join(L))
+
+          # ── 4. Exit ────────────────────────────────────────────────────────────
           if errors:
               print("\nVALIDATION FAILED:")
               for e in errors:
                   print(f"  - {e}")
               sys.exit(1)
 
-          print(f"\n{non_empty}/{len(sport_files)} files have data")
+          print(f"\n{non_empty}/{len(sport_files)} files have data, {total_no_loc} sessions missing location")
           EOF
 
       - name: Commit and push to target

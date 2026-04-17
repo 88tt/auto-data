@@ -253,12 +253,26 @@ dfsess.drop(columns=['name'], inplace=True)
 
 # if end_date is null, fill with start_date
 dfsess['end_date'] = dfsess['end_date'].fillna(dfsess['start_date'])
+
+# Count per (program, series) BEFORE dropping null-centre rows → "found in scrape"
+_found_per_series = dfsess.groupby(["program", "series"]).size().reset_index(name="found")
+
 #drop rows where centre_id is null
 _n_missing_centre = dfsess['centre_id'].isnull().sum()
 if _n_missing_centre > 0:
     _missing_locs = dfsess.loc[dfsess['centre_id'].isnull(), 'centre_id'].unique()
     print(f"WARNING: {_n_missing_centre} sessions dropped — centre not in DB (likely failed Google Maps lookup): {list(_missing_locs)}")
 dfsess = dfsess[~dfsess['centre_id'].isnull()]
+
+# Count per (program, series) AFTER dropping → "saved to DB"; write summary for CI
+_saved_per_series = dfsess.groupby(["program", "series"]).size().reset_index(name="saved")
+_insert_summary_df = _found_per_series.merge(_saved_per_series, on=["program", "series"], how="left")
+_insert_summary_df["saved"] = _insert_summary_df["saved"].fillna(0).astype(int)
+_insert_summary_df["dropped"] = _insert_summary_df["found"] - _insert_summary_df["saved"]
+for _, _row in _insert_summary_df.iterrows():
+    _status = "OK" if _row["dropped"] == 0 else "WARN"
+    print(f"{_status}. {int(_row['found'])} found for {_row['program']} - {_row['series']}; {int(_row['saved'])} saved.")
+_insert_summary_df.to_json(os.path.join(season, "insert_summary.json"), orient="records", indent=2)
 
 # TODO: need to fill null max age with 999
 dfsess['max_age'] = dfsess['max_age'].fillna(999)
