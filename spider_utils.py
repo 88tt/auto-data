@@ -21,6 +21,45 @@ from ast import literal_eval
 sleep_time = 2
 WAIT_TIMEOUT = 30  # seconds for explicit waits (30 for CI, 15 was too short)
 
+_GOOGLE_MAX_RETRIES = 4
+_GOOGLE_BACKOFF_BASE = 2  # seconds; doubles each retry
+
+
+def _google_api_get(url, params, label="Google API"):
+    """requests.get with retry + exponential backoff for transient failures."""
+    for attempt in range(_GOOGLE_MAX_RETRIES):
+        try:
+            resp = requests.get(url, params=params, timeout=10)
+        except requests.exceptions.RequestException as exc:
+            if attempt == _GOOGLE_MAX_RETRIES - 1:
+                print(f"{label}: network error after {_GOOGLE_MAX_RETRIES} attempts — {exc}")
+                return None
+            wait = _GOOGLE_BACKOFF_BASE ** attempt
+            print(f"{label}: network error (attempt {attempt + 1}/{_GOOGLE_MAX_RETRIES}), retrying in {wait}s")
+            time.sleep(wait)
+            continue
+        if resp.status_code == 200:
+            return resp
+        if resp.status_code == 429:
+            wait = int(resp.headers.get("Retry-After", _GOOGLE_BACKOFF_BASE ** (attempt + 1)))
+            if attempt == _GOOGLE_MAX_RETRIES - 1:
+                print(f"{label}: rate-limited, giving up after {_GOOGLE_MAX_RETRIES} attempts")
+                return None
+            print(f"{label}: rate-limited (attempt {attempt + 1}/{_GOOGLE_MAX_RETRIES}), waiting {wait}s")
+            time.sleep(wait)
+            continue
+        if resp.status_code >= 500:
+            if attempt == _GOOGLE_MAX_RETRIES - 1:
+                print(f"{label}: server error {resp.status_code}, giving up")
+                return None
+            wait = _GOOGLE_BACKOFF_BASE ** attempt
+            print(f"{label}: server error {resp.status_code} (attempt {attempt + 1}/{_GOOGLE_MAX_RETRIES}), retrying in {wait}s")
+            time.sleep(wait)
+            continue
+        print(f"{label}: permanent error {resp.status_code}")
+        return None
+    return None
+
 # Listing pagination (Toronto Active Communities): "View more" is inside <button><span>
 # with newlines/whitespace. XPath `span[text()='View more']` does not match.
 VIEW_MORE_BUTTON_XPATH = (
@@ -512,10 +551,9 @@ def get_place_id(place_name):
         'key': google_api_key
     }
     print(f'Finding place ID for {place_name}..')
-    response = requests.get(url, params=params)
+    response = _google_api_get(url, params, label=f"Places findplace ({str(place_name)[:50]})")
     sleep(2)
-    if response.status_code != 200:
-        print(f'Place ID request failed: status {response.status_code}')
+    if response is None:
         return None
     data = response.json()
     if data.get('error'):
@@ -543,10 +581,9 @@ def get_place_details(place_id):
         'key': google_api_key
     }
     print(f'Getting details for place ID {place_id}..')
-    response = requests.get(url, params=params)
+    response = _google_api_get(url, params, label=f"Places details ({place_id})")
     sleep(2)
-    if response.status_code != 200:
-        print(f'Place details request failed: status {response.status_code}')
+    if response is None:
         return None
     data = response.json()
     if data.get('error'):

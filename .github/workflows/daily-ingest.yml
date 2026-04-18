@@ -187,10 +187,16 @@ jobs:
 
           # ── 1. Load insert summary (found vs saved per series) ────────────────
           insert_summary = []
+          geocode_failures = []
           for p in glob.glob("raw_data/**/insert_summary.json", recursive=True):
               try:
-                  insert_summary = json.load(open(p))
-                  print(f"Loaded insert summary: {p}")
+                  raw = json.load(open(p))
+                  if isinstance(raw, dict):
+                      insert_summary = raw.get("series", [])
+                      geocode_failures = raw.get("geocode_failures", [])
+                  else:
+                      insert_summary = raw  # backward compat: old list format
+                  print(f"Loaded insert summary: {p} ({len(insert_summary)} series, {len(geocode_failures)} geocode failures)")
                   break
               except Exception:
                   pass
@@ -274,6 +280,17 @@ jobs:
                   L += ["</details>", ""]
               else:
                   L += ["## Insert: Found vs Saved", "", "_Not available (export-only or insert skipped)_", ""]
+
+              if geocode_failures:
+                  L += [
+                      f"## ⚠️ Geocoding Failures ({len(geocode_failures)} centres)",
+                      "",
+                      "_These centres had no address returned by Google Maps. Their sessions are in the DB but will export without location._",
+                      "",
+                  ]
+                  for c in geocode_failures:
+                      L.append(f"- `{c}`")
+                  L.append("")
 
               L += [
                   "## Export Results",

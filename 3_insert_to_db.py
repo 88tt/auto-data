@@ -7,6 +7,7 @@ python 3_insert_to_db.py
 ``` 
 """
 import datetime
+import json
 import os
 
 import pandas as pd
@@ -76,6 +77,7 @@ dfcentres_existing = dfcentres[dfcentres["name"].isin(existing_names)].merge(
 dfcentres_new = dfcentres[~dfcentres["name"].isin(existing_names)]
 
 # Only call Google API for locations not already in DB
+_geocode_failures = []
 if len(dfcentres_new) > 0:
     dfcentres_new = dfcentres_new.copy()
     dfcentres_new["place_id"] = dfcentres_new["search_name"].apply(
@@ -87,6 +89,10 @@ if len(dfcentres_new) > 0:
     )
     dfcentres_new["created_at"] = datetime.datetime.now()
     dfcentres_new["Location"] = dfcentres_new["Location"].str.replace(" Community ", " Cmty ", case=False).str.replace(" Recreation ", " Rec ", case=False)
+
+    _geocode_failures = dfcentres_new.loc[dfcentres_new["address"].isnull(), "Location"].tolist()
+    if _geocode_failures:
+        print(f"WARNING: {len(_geocode_failures)} new centres failed geocoding — sessions for these centres will export without location: {_geocode_failures}")
 
     # to db (skip rows that already exist to avoid UniqueViolation on re-run)
     dfcentres_clean = dfcentres_new[["name", "address", "latitude", "longitude", "fullname", "url", "created_at"]][dfcentres_new["address"].notnull()].drop_duplicates()
@@ -272,7 +278,11 @@ _insert_summary_df["dropped"] = _insert_summary_df["found"] - _insert_summary_df
 for _, _row in _insert_summary_df.iterrows():
     _status = "OK" if _row["dropped"] == 0 else "WARN"
     print(f"{_status}. {int(_row['found'])} found for {_row['program']} - {_row['series']}; {int(_row['saved'])} saved.")
-_insert_summary_df.to_json(os.path.join(season, "insert_summary.json"), orient="records", indent=2)
+with open(os.path.join(season, "insert_summary.json"), "w") as _f:
+    json.dump({
+        "series": _insert_summary_df.to_dict(orient="records"),
+        "geocode_failures": _geocode_failures,
+    }, _f, indent=2)
 
 # TODO: need to fill null max age with 999
 dfsess['max_age'] = dfsess['max_age'].fillna(999)
