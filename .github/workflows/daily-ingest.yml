@@ -127,7 +127,7 @@ jobs:
   export:
     runs-on: ubuntu-latest
     needs: [scrape, insert]
-    if: always() && (needs.insert.result == 'success' || needs.insert.result == 'skipped')
+    if: always()
 
     steps:
       - name: Checkout this repo
@@ -151,13 +151,14 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Download combined dfcrs
-        if: ${{ github.event.inputs.export_only != 'true' }}
+        if: ${{ github.event.inputs.export_only != 'true' && (needs.insert.result == 'success' || needs.insert.result == 'skipped') }}
         uses: actions/download-artifact@v4
         with:
           name: dfcrs-combined
           path: raw_data/
 
       - name: Export JSON to target
+        if: needs.insert.result == 'success' || needs.insert.result == 'skipped'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           OUT_DIR: ${{ github.workspace }}/target/public/data
@@ -182,8 +183,11 @@ jobs:
           repo          = os.environ.get("GITHUB_REPOSITORY", "")
           run_url       = f"https://github.com/{repo}/actions/runs/{run_id}" if repo else ""
           now_str       = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+          _emoji = {"success": "✅", "failure": "❌", "skipped": "⏭️", "cancelled": "🚫"}
           scrape_result = os.environ.get("SCRAPE_RESULT", "skipped")
           insert_result = os.environ.get("INSERT_RESULT", "skipped")
+          scrape_display = f"{_emoji.get(scrape_result, '')} {scrape_result}"
+          insert_display = f"{_emoji.get(insert_result, '')} {insert_result}"
 
           # ── 1. Load insert summary (found vs saved per series) ────────────────
           insert_summary = []
@@ -254,8 +258,8 @@ jobs:
                   "",
                   "| Job | Result |",
                   "|-----|--------|",
-                  f"| Scrape | {scrape_result} |",
-                  f"| Insert | {insert_result} |",
+                  f"| Scrape | {scrape_display} |",
+                  f"| Insert | {insert_display} |",
                   f"| Export | {'✅ success' if not errors else '❌ failed'} |",
                   "",
               ]
@@ -284,8 +288,7 @@ jobs:
                   L += ["## Insert: Found vs Saved", "", "_Not available (export-only or insert skipped)_", ""]
 
               if no_location_in_scrape:
-                  from collections import defaultdict as _dd
-                  _by_prog = _dd(list)
+                  _by_prog = defaultdict(list)
                   for r in no_location_in_scrape:
                       _by_prog[(r["program"], r["series"])].append(r["session_number"])
                   L += [
@@ -357,6 +360,7 @@ jobs:
           EOF
 
       - name: Commit and push to target
+        if: needs.insert.result == 'success' || needs.insert.result == 'skipped'
         working-directory: target
         run: |
           git config user.name "github-actions[bot]"
