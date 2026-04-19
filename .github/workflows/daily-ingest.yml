@@ -166,6 +166,52 @@ jobs:
           EXPORT_LATEST_SCRAPE_ONLY: "1"
         run: python 4_db_to_json.py
 
+      - name: Sanity-check session counts vs previous export
+        run: |
+          python - <<'EOF'
+          import json, os, sys, glob
+
+          season   = os.environ["YEAR_AND_SEASON"]
+          data_dir = "target/public/data"
+          counts_path = os.path.join(data_dir, "export_counts.json")
+          DROP_THRESHOLD = 0.40   # fail if any program loses > 40 % of sessions
+
+          try:
+              prev = {r["program"]: r["sessions"] for r in json.load(open(counts_path))["counts"]}
+          except Exception:
+              print("No previous export_counts.json found — skipping regression check")
+              sys.exit(0)
+
+          sport_files = glob.glob(os.path.join(data_dir, f"*_{season}.json"))
+          if not sport_files:
+              print("No new sport files yet — skipping regression check")
+              sys.exit(0)
+
+          errors = []
+          for path in sport_files:
+              program = os.path.basename(path).replace(f"_{season}.json", "")
+              if program not in prev:
+                  continue
+              try:
+                  new_count = len(json.load(open(path))["sessionsWithCourses"])
+              except Exception:
+                  continue
+              old_count = prev[program]
+              if old_count > 0:
+                  drop = (old_count - new_count) / old_count
+                  if drop > DROP_THRESHOLD:
+                      errors.append(f"{program}: {old_count} → {new_count} sessions ({drop:.0%} drop)")
+
+          if errors:
+              print("REGRESSION CHECK FAILED — session count dropped too much:")
+              for e in errors:
+                  print(f"  ✗ {e}")
+              print("Aborting push to main. Investigate before re-running.")
+              sys.exit(1)
+
+          print("Regression check passed.")
+          EOF
+
       - name: Validate output files
         env:
           SCRAPE_RESULT: ${{ needs.scrape.result }}
@@ -370,5 +416,6 @@ jobs:
             echo "No changes to public data — skipping commit"
           else
             git commit -m "chore: update programs data $(date -u +%Y-%m-%d)"
+            git pull --rebase origin ${{ env.TARGET_BRANCH }}
             git push
           fi
