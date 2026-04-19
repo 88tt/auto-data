@@ -188,15 +188,17 @@ jobs:
           # ── 1. Load insert summary (found vs saved per series) ────────────────
           insert_summary = []
           geocode_failures = []
+          no_location_in_scrape = []
           for p in glob.glob("raw_data/**/insert_summary.json", recursive=True):
               try:
                   raw = json.load(open(p))
                   if isinstance(raw, dict):
-                      insert_summary = raw.get("series", [])
-                      geocode_failures = raw.get("geocode_failures", [])
+                      insert_summary       = raw.get("series", [])
+                      geocode_failures     = raw.get("geocode_failures", [])
+                      no_location_in_scrape = raw.get("no_location_in_scrape", [])
                   else:
                       insert_summary = raw  # backward compat: old list format
-                  print(f"Loaded insert summary: {p} ({len(insert_summary)} series, {len(geocode_failures)} geocode failures)")
+                  print(f"Loaded insert summary: {p} ({len(insert_summary)} series, {len(geocode_failures)} geocode failures, {len(no_location_in_scrape)} no-location-in-scrape)")
                   break
               except Exception:
                   pass
@@ -280,6 +282,24 @@ jobs:
                   L += ["</details>", ""]
               else:
                   L += ["## Insert: Found vs Saved", "", "_Not available (export-only or insert skipped)_", ""]
+
+              if no_location_in_scrape:
+                  from collections import defaultdict as _dd
+                  _by_prog = _dd(list)
+                  for r in no_location_in_scrape:
+                      _by_prog[(r["program"], r["series"])].append(r["session_number"])
+                  L += [
+                      f"## ⚠️ No Location in Scraped Data ({len(no_location_in_scrape)} sessions dropped before DB insert)",
+                      "",
+                      "| Program | Series | # | Session Numbers |",
+                      "|---------|--------|--:|-----------------|",
+                  ]
+                  for (prog, series), nums in sorted(_by_prog.items()):
+                      nums_str = ", ".join(f"`{n}`" for n in nums[:15])
+                      if len(nums) > 15:
+                          nums_str += f" … +{len(nums) - 15} more"
+                      L.append(f"| {prog} | {series} | {len(nums)} | {nums_str} |")
+                  L.append("")
 
               if geocode_failures:
                   L += [

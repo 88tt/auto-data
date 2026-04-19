@@ -263,6 +263,20 @@ dfsess['end_date'] = dfsess['end_date'].fillna(dfsess['start_date'])
 # Count per (program, series) BEFORE dropping null-centre rows → "found in scrape"
 _found_per_series = dfsess.groupby(["program", "series"]).size().reset_index(name="found")
 
+# Sessions with no Location in scraped data (centre_id is null before any DB/API lookup)
+_no_loc_scrape_mask = dfsess['centre_id'].isnull()
+if _no_loc_scrape_mask.any():
+    _no_location_in_scrape = (
+        dfsess[_no_loc_scrape_mask][['program', 'series', 'barcode']]
+        .assign(session_number=lambda df: df['barcode'].str.split('_%_').str[-1])
+        [['program', 'series', 'session_number']]
+        .to_dict(orient='records')
+    )
+    print(f"WARNING: {len(_no_location_in_scrape)} sessions have no Location in scraped data and will be dropped: "
+          f"{[r['session_number'] for r in _no_location_in_scrape]}")
+else:
+    _no_location_in_scrape = []
+
 #drop rows where centre_id is null
 _n_missing_centre = dfsess['centre_id'].isnull().sum()
 if _n_missing_centre > 0:
@@ -282,6 +296,7 @@ with open(os.path.join(season, "insert_summary.json"), "w") as _f:
     json.dump({
         "series": _insert_summary_df.to_dict(orient="records"),
         "geocode_failures": _geocode_failures,
+        "no_location_in_scrape": _no_location_in_scrape,
     }, _f, indent=2)
 
 # TODO: need to fill null max age with 999
