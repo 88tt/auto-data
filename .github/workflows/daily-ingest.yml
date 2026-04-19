@@ -23,7 +23,7 @@ env:
   CITY: "To"
   CHROME_HEADLESS: "1"
   PYTHONUNBUFFERED: "1"
-  TARGET_BRANCH: "data/registered-programs"  # merged to main manually when ready for prod
+  TARGET_BRANCH: "main"
 
 jobs:
   scrape:
