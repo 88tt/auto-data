@@ -19,6 +19,10 @@ on:
         description: "Run full pipeline but skip pushing JSON to frontend repo"
         type: boolean
         default: false
+      export_season_pattern:
+        description: "Export pattern: 'To' for all seasons, or specific e.g. '2026s2To'"
+        required: false
+        default: "To"
 
 env:
   # Documented pattern for workflow_dispatch + schedule (inputs empty on schedule).
@@ -29,7 +33,7 @@ env:
   PYTHONUNBUFFERED: "1"
   TARGET_BRANCH: "main"
   # City-level export pattern: export all seasons for Toronto so frontend can filter by season.
-  EXPORT_SEASON_PATTERN: "To"
+  EXPORT_SEASON_PATTERN: ${{ github.event.inputs.export_season_pattern || 'To' }}
 
 jobs:
   scrape:
