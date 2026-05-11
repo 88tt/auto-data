@@ -20,9 +20,9 @@ on:
         type: boolean
         default: false
       export_season_pattern:
-        description: "Export pattern: 'To' for all seasons, or specific e.g. '2026s2To'"
+        description: "Season to export (overrides year_and_season for export only, e.g. '2026s1To')"
         required: false
-        default: "To"
+        default: ""
 
 env:
   # Documented pattern for workflow_dispatch + schedule (inputs empty on schedule).
@@ -32,8 +32,8 @@ env:
   CHROME_HEADLESS: "1"
   PYTHONUNBUFFERED: "1"
   TARGET_BRANCH: "main"
-  # City-level export pattern: export all seasons for Toronto so frontend can filter by season.
-  EXPORT_SEASON_PATTERN: ${{ github.event.inputs.export_season_pattern || 'To' }}
+  # Allows exporting a different season than what was scraped (e.g. to re-export spring while scraping summer).
+  YEAR_AND_SEASON_EXPORT: ${{ github.event.inputs.export_season_pattern || github.event.inputs.year_and_season || '2026s2To' }}
 
 jobs:
   scrape:
@@ -174,6 +174,7 @@ jobs:
           OUT_DIR: ${{ github.workspace }}/target/public/data
           SCRAPE_RUN: scraped${{ github.run_id }}
           EXPORT_LATEST_SCRAPE_ONLY: "1"
+          YEAR_AND_SEASON: ${{ env.YEAR_AND_SEASON_EXPORT }}
         run: python 4_db_to_json.py
 
       - name: Sanity-check session counts vs previous export
@@ -181,7 +182,7 @@ jobs:
           python - <<'EOF'
           import json, os, sys, glob
 
-          season   = os.environ.get("EXPORT_SEASON_PATTERN", os.environ["YEAR_AND_SEASON"])
+          season   = os.environ.get("YEAR_AND_SEASON_EXPORT", os.environ["YEAR_AND_SEASON"])
           data_dir = "target/public/data"
           counts_path = os.path.join(data_dir, "export_counts.json")
           DROP_THRESHOLD = 0.40   # fail if any program loses > 40 % of sessions
@@ -232,7 +233,7 @@ jobs:
           from collections import defaultdict
           from datetime import datetime, timezone
 
-          season        = os.environ.get("EXPORT_SEASON_PATTERN", os.environ["YEAR_AND_SEASON"])
+          season        = os.environ.get("YEAR_AND_SEASON_EXPORT", os.environ["YEAR_AND_SEASON"])
           data_dir      = "target/public/data"
           summary_path  = os.environ.get("GITHUB_STEP_SUMMARY", "")
           run_id        = os.environ.get("GITHUB_RUN_ID", "local")

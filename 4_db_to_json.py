@@ -120,8 +120,6 @@ def _sanitize_json_value(obj):
 # ---------------------------------------------------------------------------
 DB_URL = os.environ.get("DB_URL", config.DB_URL)
 YEAR_AND_SEASON = os.environ.get("YEAR_AND_SEASON", config.YEAR_AND_SEASON)
-# City-level wildcard for export (e.g. "To" → all Toronto seasons). Defaults to YEAR_AND_SEASON.
-EXPORT_SEASON_PATTERN = os.environ.get("EXPORT_SEASON_PATTERN", config.EXPORT_SEASON_PATTERN)
 # Programs to export. Override with env SPORTS (comma-separated).
 SPORTS = [
     s.strip()
@@ -249,8 +247,8 @@ def _build_latest_allowed_barcodes(engine=None) -> set[str] | None:
         return None
 
 
-def export_series(engine, keyword, season_pat, *, allowed_series_ids: set[str] | None = None):
-    name_pattern = f"^{re.escape(keyword)}{season_pat}_%_"
+def export_series(engine, keyword, year_and_season, *, allowed_series_ids: set[str] | None = None):
+    name_pattern = f"^{re.escape(keyword)}{re.escape(year_and_season)}_%_"
     q = text(
         """
         SELECT name, min_age, max_age, description, session_count, created_at
@@ -265,8 +263,8 @@ def export_series(engine, keyword, season_pat, *, allowed_series_ids: set[str] |
     return df.to_dict(orient="records")
 
 
-def export_coursenames(engine, keyword, season_pat, *, allowed_coursename_ids: set[str] | None = None):
-    pat = f"^{re.escape(keyword)}{season_pat}_%_.*"
+def export_coursenames(engine, keyword, year_and_season, *, allowed_coursename_ids: set[str] | None = None):
+    pat = f"^{re.escape(keyword)}{re.escape(year_and_season)}_%_.*"
     q = text(
         """
         SELECT name, series_id AS series, crs_name_desc, num_sessions, min_age, max_age
@@ -280,8 +278,8 @@ def export_coursenames(engine, keyword, season_pat, *, allowed_coursename_ids: s
     return df.to_dict(orient="records")
 
 
-def export_sessions_with_courses(engine, keyword, season_pat, *, allowed_barcodes: set[str] | None = None):
-    barcode_pat = f"^{re.escape(keyword)}{season_pat}_%_.*"
+def export_sessions_with_courses(engine, keyword, year_and_season, *, allowed_barcodes: set[str] | None = None):
+    barcode_pat = f"^{re.escape(keyword)}{re.escape(year_and_season)}_%_.*"
     q = text(
         """
         SELECT
@@ -370,11 +368,11 @@ def export_business_locations(engine, keyword):
     return df.to_dict(orient="records")
 
 
-def export_sport_season(engine, keyword, season_pat, *, allowed_barcodes: set[str] | None = None):
+def export_sport_season(engine, keyword, year_and_season, *, allowed_barcodes: set[str] | None = None):
     sessions = export_sessions_with_courses(
         engine,
         keyword,
-        season_pat,
+        year_and_season,
         allowed_barcodes=allowed_barcodes,
     )
     allowed_series_ids = None
@@ -387,13 +385,13 @@ def export_sport_season(engine, keyword, season_pat, *, allowed_barcodes: set[st
         "series": export_series(
             engine,
             keyword,
-            season_pat,
+            year_and_season,
             allowed_series_ids=allowed_series_ids,
         ),
         "courseNames": export_coursenames(
             engine,
             keyword,
-            season_pat,
+            year_and_season,
             allowed_coursename_ids=allowed_coursename_ids,
         ),
         "sessionsWithCourses": sessions,
@@ -408,24 +406,14 @@ def main():
     season_dir.mkdir(parents=True, exist_ok=True)
     print(f"Export OUT_DIR={season_dir.resolve()}")
 
-    # Multi-season export: EXPORT_SEASON_PATTERN is a city suffix (e.g. "To") rather than a
-    # full season ID. Build a regex fragment that matches any season for this city, and export
-    # all DB sessions (frontend uses start_date / availability for display logic).
-    _multi_season = EXPORT_SEASON_PATTERN != YEAR_AND_SEASON
-    if _multi_season:
-        season_pat = r".*" + re.escape(EXPORT_SEASON_PATTERN)
-        allowed_barcodes = None
-        print(f"Multi-season export: pattern='{EXPORT_SEASON_PATTERN}' (all seasons for city)")
-    else:
-        season_pat = re.escape(YEAR_AND_SEASON)
-        allowed_barcodes = None
-        if EXPORT_LATEST_SCRAPE_ONLY:
-            allowed_barcodes = _build_latest_allowed_barcodes(engine)
-        print(
-            f"Export mode: latest scrape only = {bool(EXPORT_LATEST_SCRAPE_ONLY and allowed_barcodes is not None)}"
-        )
-        if EXPORT_LATEST_SCRAPE_ONLY and allowed_barcodes is None:
-            print("Latest-scrape-only requested, but no filter source available. Falling back to full-season export.")
+    allowed_barcodes: set[str] | None = None
+    if EXPORT_LATEST_SCRAPE_ONLY:
+        allowed_barcodes = _build_latest_allowed_barcodes(engine)
+    print(
+        f"Export mode: latest scrape only = {bool(EXPORT_LATEST_SCRAPE_ONLY and allowed_barcodes is not None)}"
+    )
+    if EXPORT_LATEST_SCRAPE_ONLY and allowed_barcodes is None:
+        print("Latest-scrape-only requested, but no filter source available. Falling back to full-season export.")
 
     # Export programs_desc.csv to programs.json if the CSV exists
     programs_count = 0
@@ -447,12 +435,12 @@ def main():
         payload = export_sport_season(
             engine,
             sport,
-            season_pat,
-            allowed_barcodes=allowed_barcodes,
+            YEAR_AND_SEASON,
+            allowed_barcodes=allowed_barcodes if EXPORT_LATEST_SCRAPE_ONLY else None,
         )
         # Sanitize for filename: slash would create a subdirectory (e.g. "Ski/Snowboard -" -> "Ski-Snowboard -")
         sport_safe = sport.replace("/", "-")
-        out_path = season_dir / f"{sport_safe}_{EXPORT_SEASON_PATTERN}.json"
+        out_path = season_dir / f"{sport_safe}_{YEAR_AND_SEASON}.json"
         payload = _sanitize_json_value(payload)
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(
@@ -494,7 +482,7 @@ def main():
         json.dump(
             _sanitize_json_value(
                 {
-                    "yearAndSeason": EXPORT_SEASON_PATTERN,
+                    "yearAndSeason": YEAR_AND_SEASON,
                     "programs": programs_count,
                     "counts": export_counts,
                 }
@@ -507,7 +495,7 @@ def main():
 
     # Optional: write a small manifest so frontend knows available sport/season
     manifest = {
-        "yearAndSeason": EXPORT_SEASON_PATTERN,
+        "yearAndSeason": YEAR_AND_SEASON,
         "sports": [s.strip() for s in SPORTS],
     }
     with open(season_dir / "manifest.json", "w", encoding="utf-8") as f:
