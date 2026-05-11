@@ -52,3 +52,6 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # - False (default): export all sessions in DB matching season pattern.
 # - True: export only sessions present in latest scrape run (config.season/dfcrs.csv).
 EXPORT_LATEST_SCRAPE_ONLY = _env_bool("EXPORT_LATEST_SCRAPE_ONLY", True)
+# For export: city-level pattern to match all seasons in DB (e.g. "To" matches 2026s1To, 2026s2To, ...).
+# Defaults to YEAR_AND_SEASON for single-season behaviour.
+EXPORT_SEASON_PATTERN = os.environ.get("EXPORT_SEASON_PATTERN", YEAR_AND_SEASON)

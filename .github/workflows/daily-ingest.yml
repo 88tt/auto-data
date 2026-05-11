@@ -24,6 +24,8 @@ env:
   CHROME_HEADLESS: "1"
   PYTHONUNBUFFERED: "1"
   TARGET_BRANCH: "main"
+  # City-level export pattern: export all seasons for Toronto so frontend can filter by season.
+  EXPORT_SEASON_PATTERN: "To"
 
 jobs:
   scrape:
@@ -171,7 +173,7 @@ jobs:
           python - <<'EOF'
           import json, os, sys, glob
 
-          season   = os.environ["YEAR_AND_SEASON"]
+          season   = os.environ.get("EXPORT_SEASON_PATTERN", os.environ["YEAR_AND_SEASON"])
           data_dir = "target/public/data"
           counts_path = os.path.join(data_dir, "export_counts.json")
           DROP_THRESHOLD = 0.40   # fail if any program loses > 40 % of sessions
@@ -222,7 +224,7 @@ jobs:
           from collections import defaultdict
           from datetime import datetime, timezone
 
-          season        = os.environ["YEAR_AND_SEASON"]
+          season        = os.environ.get("EXPORT_SEASON_PATTERN", os.environ["YEAR_AND_SEASON"])
           data_dir      = "target/public/data"
           summary_path  = os.environ.get("GITHUB_STEP_SUMMARY", "")
           run_id        = os.environ.get("GITHUB_RUN_ID", "local")
