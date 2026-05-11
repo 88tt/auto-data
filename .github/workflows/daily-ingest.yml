@@ -15,6 +15,10 @@ on:
         description: "Skip scrape + insert; export from DB only"
         type: boolean
         default: false
+      dry_run:
+        description: "Run full pipeline but skip pushing JSON to frontend repo"
+        type: boolean
+        default: false
 
 env:
   # Documented pattern for workflow_dispatch + schedule (inputs empty on schedule).
@@ -408,7 +412,7 @@ jobs:
           EOF
 
       - name: Commit and push to target
-        if: needs.insert.result == 'success' || needs.insert.result == 'skipped'
+        if: (needs.insert.result == 'success' || needs.insert.result == 'skipped') && github.event.inputs.dry_run != 'true'
         working-directory: target
         run: |
           git config user.name "github-actions[bot]"
