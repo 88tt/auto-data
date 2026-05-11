@@ -53,9 +53,15 @@ engine = create_engine(config.DB_URL, pool_pre_ping=True, pool_recycle=300)
 ############################################################################################################
 # insert into 'centres' in db
 ############################################################################################################
+# Maps known non-address location strings (as the city scrapes them) to their real venue names for geocoding.
+_LOCATION_NAME_OVERRIDES = {
+    "Meet at south side of Summerville, course takes place on the beach and in the lake": "Donald D. Summerville Olympic Pools",
+}
+
 dfcentres = dfcrs[session_insert_mask & (~dfcrs['Location'].isnull())][['Location']].drop_duplicates()
 # replace ' Cmty ' with ' Community ' and ' Rec ' with ' Recreation ' in Location
 dfcentres['search_name'] = dfcentres['Location'].str.replace(' Cmty ', ' Community ', case=False).str.replace(' Rec ', ' Recreation ', case=False)
+dfcentres['search_name'] = dfcentres['search_name'].apply(lambda x: _LOCATION_NAME_OVERRIDES.get(x, x))
 dfcentres['name'] = pk_prefix + dfcentres['Location']
 
 # Load existing centres for current year/season/city only (name starts with pk_prefix, e.g. 2026s2To_%_)
@@ -101,6 +107,11 @@ if len(dfcentres_new) > 0:
         with engine.begin() as conn:
             to_insert.to_sql('activities_centres', con=conn, if_exists='append', index=False)
         print(f'Inserted {len(to_insert)} new centres.')
+
+# Centres actually present in DB: pre-existing + newly inserted (geocoding failures excluded)
+_valid_centre_names = set(existing_names)
+if len(dfcentres_new) > 0:
+    _valid_centre_names |= set(dfcentres_new.loc[dfcentres_new["address"].notnull(), "name"])
 
 
 def _insert_missing_courses_for_session_fk(conn, *, needed_course_ids, dfcrs, season_mask, pk_prefix, like_esc):
@@ -252,10 +263,8 @@ _sess_ts = datetime.datetime.now()
 dfsess['created_at'] = _sess_ts
 dfsess['updated_at'] = _sess_ts
 
-# if centre_id is not in dfcentres, fill centre_id with null
-dfsess = dfsess.merge(dfcentres[['name']], how='left', left_on='centre_id', right_on='name')
-dfsess.loc[dfsess['centre_id'].isnull(),'centre_id'] = None
-dfsess.drop(columns=['name'], inplace=True)
+# Null out centre_id for centres not actually in the DB (e.g. geocoding failures)
+dfsess['centre_id'] = dfsess['centre_id'].where(dfsess['centre_id'].isin(_valid_centre_names), None)
 
 # if end_date is null, fill with start_date
 dfsess['end_date'] = dfsess['end_date'].fillna(dfsess['start_date'])
