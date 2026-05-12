@@ -32,7 +32,7 @@ pk_prefix = config.pk_prefix
 # Override with env ACTIVITIES="CampTO,Swim" (comma-separated) or ACTIVITY_FILTER="CampTO" for a single filter.
 ACTIVITIES = os.environ.get(
     "ACTIVITIES",
-    "Swim,Skate - ,Ski/Snowboard - ,Sports -,Hobbies,Arts -,Leadership,CampTO,Early Years,FitnessTO,After School,Adapted Activities",
+    "Swim,Skate - ,Ski/Snowboard - ,Sports -,Hobbies,Arts -,Leadership,CampTO,Early Years,FitnessTO,After School,Adapted Activities,Adapted Virtual",
 ).strip().split(",")
 ACTIVITIES = [a.strip() for a in ACTIVITIES if a.strip()]
 # Single filter (optional): if set, only this filter is used instead of looping ACTIVITIES.

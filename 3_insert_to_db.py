@@ -56,6 +56,7 @@ engine = create_engine(config.DB_URL, pool_pre_ping=True, pool_recycle=300)
 # Maps known non-address location strings (as the city scrapes them) to their real venue names for geocoding.
 _LOCATION_NAME_OVERRIDES = {
     "Meet at south side of Summerville, course takes place on the beach and in the lake": "Donald D. Summerville Olympic Pools",
+    "South side of building": "Donald D. Summerville Olympic Pools",
 }
 
 dfcentres = dfcrs[session_insert_mask & (~dfcrs['Location'].isnull())][['Location']].drop_duplicates()

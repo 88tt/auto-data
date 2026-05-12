@@ -264,7 +264,7 @@ def export_series(engine, keyword, year_and_season, *, allowed_series_ids: set[s
 
 
 def export_coursenames(engine, keyword, year_and_season, *, allowed_coursename_ids: set[str] | None = None):
-    pat = f"^{re.escape(keyword)}{re.escape(year_and_season)}_%_.*"
+    pat = f"^{re.escape(keyword)}.*{re.escape(year_and_season)}_%_.*"
     q = text(
         """
         SELECT name, series_id AS series, crs_name_desc, num_sessions, min_age, max_age
@@ -415,18 +415,22 @@ def main():
     if EXPORT_LATEST_SCRAPE_ONLY and allowed_barcodes is None:
         print("Latest-scrape-only requested, but no filter source available. Falling back to full-season export.")
 
-    # Export programs_desc.csv to programs.json if the CSV exists
+    # Display name overrides: maps internal export program name → frontend display name.
+    # Required when the DB program name differs from what the frontend constants (activityData.js) expect.
+    _PROGRAM_DISPLAY_NAMES = {
+        "Hobbies": "Hobbies and Interests",
+    }
+
+    # Load programs_desc.csv as description source (optional)
     programs_count = 0
     programs_csv = Path(PROGRAMS_CSV)
+    _programs_desc_map: dict = {}
     if programs_csv.exists():
-        df = pd.read_csv(programs_csv)
-        programs = _sanitize_json_value(df.to_dict(orient="records"))
-        programs_count = len(programs)
-        with open(season_dir / "programs.json", "w", encoding="utf-8") as f:
-            json.dump(programs, f, indent=2, ensure_ascii=False, allow_nan=False)
-        print(f"Wrote {season_dir / 'programs.json'} ({programs_count} programs)")
+        _df_desc = pd.read_csv(programs_csv)
+        for _, _r in _df_desc.iterrows():
+            _programs_desc_map[str(_r.get("program", "")).strip()] = _r.to_dict()
     else:
-        print(f"Note: programs_desc not found at {programs_csv}, skipping programs.json")
+        print(f"Note: programs_desc not found at {programs_csv}, will write programs.json from export counts.")
 
     export_counts = []
     centre_programs: dict[str, list[str]] = {}  # centre name -> [program, ...]
@@ -469,6 +473,21 @@ def main():
             centre = s.get("centre")
             if centre and sport not in centre_programs.get(centre, []):
                 centre_programs.setdefault(centre, []).append(sport)
+
+    # Write programs.json — only include programs with sessions > 0; merge descriptions if available
+    _programs_json: list = []
+    for _ec in export_counts:
+        if _ec["sessions"] == 0:
+            continue
+        _prog = _ec["program"]
+        _display = _PROGRAM_DISPLAY_NAMES.get(_prog, _prog)
+        _entry = dict(_programs_desc_map.get(_display, _programs_desc_map.get(_prog, {})))
+        _entry["program"] = _display
+        _programs_json.append(_entry)
+    programs_count = len(_programs_json)
+    with open(season_dir / "programs.json", "w", encoding="utf-8") as f:
+        json.dump(_sanitize_json_value(_programs_json), f, indent=2, ensure_ascii=False, allow_nan=False)
+    print(f"Wrote {season_dir / 'programs.json'} ({programs_count} programs, 0-session programs excluded)")
 
     # Write centre_programs.json — small index used by frontend activity selector
     centre_programs_path = season_dir / "centre_programs.json"
