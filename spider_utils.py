@@ -339,7 +339,8 @@ def choose_activity_by_filter_checkbox(driver, activity_name, season_url):
             ))
         )
     except TimeoutException:
-        raise NoSuchElementException(f"Activity checkbox not found in filter panel: {activity_name!r}")
+        # Activity not offered in this season — caller should skip, not treat as error.
+        return None
 
     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", checkbox_span)
     parent = checkbox_span.find_element(By.XPATH, "./..")
