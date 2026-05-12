@@ -319,7 +319,7 @@ def _open_activities_filter_panel(driver):
 def get_activities_for_season(driver, season_url):
     """
     Navigate to season_url, open the Activities filter panel, and return all activity
-    names listed as checkboxes.  These are exactly the activities offered for that season.
+    names from the "Activity category" fieldset only (excludes Age category etc.).
     """
     driver.get(season_url)
     WebDriverWait(driver, WAIT_TIMEOUT).until(
@@ -327,7 +327,12 @@ def get_activities_for_season(driver, season_url):
     )
     time.sleep(1)
     _open_activities_filter_panel(driver)
-    spans = driver.find_elements(By.CLASS_NAME, "checkbox__text")
+    # Scope to the "Activity category" fieldset only — the panel also has Age category etc.
+    spans = driver.find_elements(
+        By.XPATH,
+        "//fieldset[.//legend[normalize-space(.)='Activity category']]"
+        "//span[contains(@class,'checkbox__text')]",
+    )
     return [s.text.strip() for s in spans if s.text.strip()]
 
 
