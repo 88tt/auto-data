@@ -67,7 +67,7 @@ _ACTIVITIES_FILTER_BTN_XPATH = (
     " and span[span[contains(normalize-space(),'Activities')]]]"
 )
 # "View more" inside the filter panel (same <a aria-label='View more'> as location filter).
-_FILTER_VIEW_MORE_XPATH = "//a[@aria-label='View more']"
+_FILTER_VIEW_MORE_XPATH = "//div[contains(@class,'activity-filter-body')]//a[@aria-label='View more']"
 
 # Listing pagination (Toronto Active Communities): "View more" is inside <button><span>
 # with newlines/whitespace. XPath `span[text()='View more']` does not match.
@@ -373,9 +373,10 @@ def _open_activities_filter_panel(driver):
                 EC.element_to_be_clickable((By.XPATH, _FILTER_VIEW_MORE_XPATH))
             )
             view_more.click()
-            time.sleep(0.5)
+            time.sleep(1)
         except (TimeoutException, NoSuchElementException):
             break
+    time.sleep(0.5)  # let final batch of items render
 
 
 def get_activities_for_season(driver, season_url):
