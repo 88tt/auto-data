@@ -76,7 +76,7 @@ VIEW_MORE_BUTTON_XPATH = (
     " | //span[normalize-space()='View more']/ancestor::button[1]"
 )
 # Large programs (1000+ rows) need many clicks; each batch can be slow to paint.
-MAX_VIEW_MORE_CLICKS = 80
+MAX_VIEW_MORE_CLICKS = 500
 VIEW_MORE_BUTTON_WAIT = 15
 # After each click: wait up to this long for new rows; poll frequently so fast batches finish quickly.
 POST_CLICK_MAX_WAIT = 20
