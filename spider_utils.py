@@ -362,7 +362,7 @@ def _open_activities_filter_panel(driver):
         EC.element_to_be_clickable((By.XPATH, _ACTIVITIES_FILTER_BTN_XPATH))
     )
     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
-    btn.click()
+    driver.execute_script("arguments[0].click();", btn)
     # Wait until at least one checkbox appears (panel rendered)
     WebDriverWait(driver, WAIT_TIMEOUT).until(
         EC.presence_of_element_located((By.CLASS_NAME, "checkbox__text"))
