@@ -92,10 +92,10 @@ def main():
         return
 
     multi_season = len(SEASON_IDS) > 1
-    programs, driver = su.initiate_and_get_all_activities(SITE_SLUG)
+    _, driver = su.initiate_and_get_all_activities(SITE_SLUG)
     try:
         print(f"City: {CITY}, site: {SITE_SLUG}, seasons: {SEASON_IDS}, output: {output_dir}")
-        print(f"Looping through {len(filters_to_use)} activity filter(s): {filters_to_use}")
+        print(f"Activity filters: {filters_to_use}")
 
         for season_id in SEASON_IDS:
             season_url = (
@@ -104,103 +104,105 @@ def main():
             )
             print(f"\n--- Season {season_id} ---")
 
-            for activity_filter in filters_to_use:
-                all_crs = [f for f in programs if activity_filter in f]
-                to_scrape = [
-                    f for f in all_crs
-                    if not _already_scraped(output_dir, f, season_id, multi_season)
-                ]
+            # Discover activities available for this season from the panel itself
+            available = su.get_activities_for_season(driver, season_url)
+            print(f"  {len(available)} activities in panel for season {season_id}")
 
-                if not to_scrape:
-                    print(f"  [{activity_filter}] Nothing to scrape: all {len(all_crs)} matching already done.")
-                    continue
+            # Keep only those matching at least one of our activity filters
+            matched = [a for a in available if any(f in a for f in filters_to_use)]
+            to_scrape = [a for a in matched if not _already_scraped(output_dir, a, season_id, multi_season)]
 
-                print(f"  [{activity_filter}] Scraping {len(to_scrape)} activities: {to_scrape}")
+            if not to_scrape:
+                already_done = len(matched) - len(to_scrape)
+                print(f"  Nothing to scrape: {len(matched)} matched filters, {already_done} already done.")
+                continue
 
-                for activity_name in to_scrape:
-                    folder_name = _activity_folder_name(activity_name, season_id, multi_season)
-                    folder = os.path.join(output_dir, folder_name)
-                    os.makedirs(folder, exist_ok=True)
+            print(f"  Scraping {len(to_scrape)}/{len(matched)} matched activities: {to_scrape}")
 
-                    try:
-                        header_total_initial = su.choose_activity_by_filter_checkbox(
-                            driver, activity_name, season_url
+            for activity_name in to_scrape:
+                folder_name = _activity_folder_name(activity_name, season_id, multi_season)
+                folder = os.path.join(output_dir, folder_name)
+                os.makedirs(folder, exist_ok=True)
+
+                try:
+                    header_total_initial = su.choose_activity_by_filter_checkbox(
+                        driver, activity_name, season_url
+                    )
+                    if header_total_initial is None:
+                        print(f"    [{season_id}] {activity_name}: not in panel, skipping.")
+                        os.rmdir(folder)
+                        continue
+                    header_total_initial = _parse_total_courses(header_total_initial)
+
+                    df = su.get_course_info(driver)
+                    dfdesc = su.get_course_description(driver, df)
+                    su.click_view_more_until_exhausted(driver)
+                    df = su.get_course_info(driver)  # Re-parse after tooltips: DOM can have more cards
+                    header_total_final = _header_total_from_page_source(driver.page_source)
+
+                    n = df.shape[0]
+                    if header_total_final == n:
+                        print(f"    OK. {header_total_final} found for {activity_name}; {n} saved.")
+                    else:
+                        print(f"    Warning. Header said {header_total_final}, parsed {n} for {activity_name}.")
+                    if header_total_initial != header_total_final:
+                        print(
+                            f"    Note. Header drifted during scrape for {activity_name}: "
+                            f"{header_total_initial} -> {header_total_final}."
                         )
-                        if header_total_initial is None:
-                            print(f"    [{season_id}] {activity_name}: not offered this season, skipping.")
-                            os.rmdir(folder)  # remove the empty dir we just created
-                            continue
-                        header_total_initial = _parse_total_courses(header_total_initial)
 
-                        df = su.get_course_info(driver)
-                        dfdesc = su.get_course_description(driver, df)
-                        su.click_view_more_until_exhausted(driver)
-                        df = su.get_course_info(driver)  # Re-parse after tooltips: DOM can have more cards
-                        header_total_final = _header_total_from_page_source(driver.page_source)
+                    counts_path = os.path.join(folder, "scrape_counts.json")
+                    with open(counts_path, "w", encoding=ENCODING) as f:
+                        json.dump(
+                            {
+                                "season_id": season_id,
+                                "header_total": header_total_final,
+                                "header_total_initial": header_total_initial,
+                                "header_total_final": header_total_final,
+                                "parsed": n,
+                                "header_drift": header_total_initial != header_total_final,
+                            },
+                            f,
+                            indent=2,
+                        )
 
-                        n = df.shape[0]
-                        if header_total_final == n:
-                            print(f"    OK. {header_total_final} found for {activity_name}; {n} saved.")
-                        else:
-                            print(f"    Warning. Header said {header_total_final}, parsed {n} for {activity_name}.")
-                        if header_total_initial != header_total_final:
-                            print(
-                                f"    Note. Header drifted during scrape for {activity_name}: "
-                                f"{header_total_initial} -> {header_total_final}."
-                            )
+                    with open(os.path.join(folder, "page_source.txt"), "w", encoding=ENCODING) as f:
+                        f.write(BeautifulSoup(driver.page_source, "html.parser").prettify())
 
-                        counts_path = os.path.join(folder, "scrape_counts.json")
-                        with open(counts_path, "w", encoding=ENCODING) as f:
+                    df.to_csv(os.path.join(folder, "courses.csv"), index=False, encoding=ENCODING)
+                    dfdesc.to_csv(os.path.join(folder, "descriptions.csv"), index=False, encoding=ENCODING)
+
+                except Exception as e:
+                    err_type = type(e).__name__
+                    err_msg = str(e).strip() if str(e).strip() else "<empty message>"
+                    err_tb = traceback.format_exc()
+                    print(
+                        f"    Error scraping {activity_name} (season {season_id}): [{err_type}] {err_msg}",
+                        file=sys.stderr,
+                    )
+                    print(err_tb, file=sys.stderr)
+                    err_path = os.path.join(folder, "scrape_error.json")
+                    try:
+                        with open(err_path, "w", encoding=ENCODING) as ef:
                             json.dump(
                                 {
                                     "season_id": season_id,
-                                    "header_total": header_total_final,
-                                    "header_total_initial": header_total_initial,
-                                    "header_total_final": header_total_final,
-                                    "parsed": n,
-                                    "header_drift": header_total_initial != header_total_final,
+                                    "activity_name": activity_name,
+                                    "error_type": err_type,
+                                    "error_message": err_msg,
+                                    "error_repr": repr(e),
+                                    "traceback": err_tb,
+                                    "captured_at": datetime.now().isoformat(),
                                 },
-                                f,
+                                ef,
                                 indent=2,
                             )
-
-                        with open(os.path.join(folder, "page_source.txt"), "w", encoding=ENCODING) as f:
-                            f.write(BeautifulSoup(driver.page_source, "html.parser").prettify())
-
-                        df.to_csv(os.path.join(folder, "courses.csv"), index=False, encoding=ENCODING)
-                        dfdesc.to_csv(os.path.join(folder, "descriptions.csv"), index=False, encoding=ENCODING)
-
-                    except Exception as e:
-                        err_type = type(e).__name__
-                        err_msg = str(e).strip() if str(e).strip() else "<empty message>"
-                        err_tb = traceback.format_exc()
+                    except Exception as write_err:
                         print(
-                            f"    Error scraping {activity_name} (season {season_id}): [{err_type}] {err_msg}",
+                            f"    Warning: could not write {err_path}: {write_err}",
                             file=sys.stderr,
                         )
-                        print(err_tb, file=sys.stderr)
-                        err_path = os.path.join(folder, "scrape_error.json")
-                        try:
-                            with open(err_path, "w", encoding=ENCODING) as ef:
-                                json.dump(
-                                    {
-                                        "season_id": season_id,
-                                        "activity_name": activity_name,
-                                        "error_type": err_type,
-                                        "error_message": err_msg,
-                                        "error_repr": repr(e),
-                                        "traceback": err_tb,
-                                        "captured_at": datetime.now().isoformat(),
-                                    },
-                                    ef,
-                                    indent=2,
-                                )
-                        except Exception as write_err:
-                            print(
-                                f"    Warning: could not write {err_path}: {write_err}",
-                                file=sys.stderr,
-                            )
-                        continue
+                    continue
 
         print("\nDone.")
     finally:

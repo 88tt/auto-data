@@ -316,6 +316,21 @@ def _open_activities_filter_panel(driver):
             break
 
 
+def get_activities_for_season(driver, season_url):
+    """
+    Navigate to season_url, open the Activities filter panel, and return all activity
+    names listed as checkboxes.  These are exactly the activities offered for that season.
+    """
+    driver.get(season_url)
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, ".activity-results-header__total, [class*='search-group']"))
+    )
+    time.sleep(1)
+    _open_activities_filter_panel(driver)
+    spans = driver.find_elements(By.CLASS_NAME, "checkbox__text")
+    return [s.text.strip() for s in spans if s.text.strip()]
+
+
 def choose_activity_by_filter_checkbox(driver, activity_name, season_url):
     """
     Select a single activity via the Activities filter checkbox panel.
