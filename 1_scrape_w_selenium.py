@@ -57,16 +57,21 @@ SEASON_IDS_OVERRIDE = [s.strip() for s in _season_ids_env.split(",") if s.strip(
 ENCODING = "utf-8"
 
 
-def _activity_folder_name(activity_name: str, season_id: str, multi_season: bool) -> str:
-    """Return the folder name for this activity.  Prefixed with s{id}_ when scraping multiple seasons."""
-    safe = activity_name.replace("/", "-")
-    return f"s{season_id}_{safe}" if multi_season else safe
+def _activity_folder_name(activity_name: str) -> str:
+    return activity_name.replace("/", "-")
 
 
-def _already_scraped(output_dir: str, activity_name: str, season_id: str, multi_season: bool) -> bool:
-    """Skip only if we have a completed courses.csv for this activity/season combo."""
-    folder = _activity_folder_name(activity_name, season_id, multi_season)
-    return os.path.isfile(os.path.join(output_dir, folder, "courses.csv"))
+def _already_scraped(output_dir: str, activity_name: str, season_id: str) -> bool:
+    """Return True if this (activity, season_id) pair has already been scraped."""
+    counts_path = os.path.join(output_dir, _activity_folder_name(activity_name), "scrape_counts.json")
+    if not os.path.isfile(counts_path):
+        return False
+    try:
+        data = json.load(open(counts_path))
+        scraped = data.get("scraped_seasons", [str(data["season_id"])] if "season_id" in data else [])
+        return str(season_id) in [str(s) for s in scraped]
+    except Exception:
+        return False
 
 
 def _parse_total_courses(raw: str) -> int:
@@ -119,7 +124,6 @@ def main():
                 print("No seasons resolved. Check SEASON_NAMES matches labels in the WHEN panel.")
                 return
 
-        multi_season = len(season_ids) > 1
         print(f"City: {CITY}, site: {SITE_SLUG}, seasons: {season_ids}, output: {output_dir}")
         print(f"Activity filters: {filters_to_use}")
 
@@ -136,7 +140,7 @@ def main():
 
             # Keep only those matching at least one of our activity filters
             matched = [a for a in available if any(f in a for f in filters_to_use)]
-            to_scrape = [a for a in matched if not _already_scraped(output_dir, a, season_id, multi_season)]
+            to_scrape = [a for a in matched if not _already_scraped(output_dir, a, season_id)]
 
             if not to_scrape:
                 already_done = len(matched) - len(to_scrape)
@@ -146,8 +150,7 @@ def main():
             print(f"  Scraping {len(to_scrape)}/{len(matched)} matched activities: {to_scrape}")
 
             for activity_name in to_scrape:
-                folder_name = _activity_folder_name(activity_name, season_id, multi_season)
-                folder = os.path.join(output_dir, folder_name)
+                folder = os.path.join(output_dir, _activity_folder_name(activity_name))
                 os.makedirs(folder, exist_ok=True)
 
                 try:
@@ -156,7 +159,8 @@ def main():
                     )
                     if header_total_initial is None:
                         print(f"    [{season_id}] {activity_name}: not in panel, skipping.")
-                        os.rmdir(folder)
+                        if not os.listdir(folder):
+                            os.rmdir(folder)
                         continue
                     header_total_initial = _parse_total_courses(header_total_initial)
 
@@ -177,11 +181,21 @@ def main():
                             f"{header_total_initial} -> {header_total_final}."
                         )
 
+                    # Load existing scrape tracking (if activity was scraped in a prior season)
                     counts_path = os.path.join(folder, "scrape_counts.json")
+                    try:
+                        existing_counts = json.load(open(counts_path))
+                        scraped_seasons = existing_counts.get("scraped_seasons", [str(existing_counts.get("season_id", ""))])
+                    except Exception:
+                        scraped_seasons = []
+                    scraped_seasons = [s for s in scraped_seasons if s]
+                    if str(season_id) not in scraped_seasons:
+                        scraped_seasons.append(str(season_id))
+
                     with open(counts_path, "w", encoding=ENCODING) as f:
                         json.dump(
                             {
-                                "season_id": season_id,
+                                "scraped_seasons": scraped_seasons,
                                 "header_total": header_total_final,
                                 "header_total_initial": header_total_initial,
                                 "header_total_final": header_total_final,
@@ -195,8 +209,18 @@ def main():
                     with open(os.path.join(folder, "page_source.txt"), "w", encoding=ENCODING) as f:
                         f.write(BeautifulSoup(driver.page_source, "html.parser").prettify())
 
-                    df.to_csv(os.path.join(folder, "courses.csv"), index=False, encoding=ENCODING)
-                    dfdesc.to_csv(os.path.join(folder, "descriptions.csv"), index=False, encoding=ENCODING)
+                    # Append if folder already has data from a previous season
+                    courses_path = os.path.join(folder, "courses.csv")
+                    if os.path.isfile(courses_path):
+                        existing = pd.read_csv(courses_path, encoding=ENCODING)
+                        df = pd.concat([existing, df], ignore_index=True).drop_duplicates()
+                    df.to_csv(courses_path, index=False, encoding=ENCODING)
+
+                    desc_path = os.path.join(folder, "descriptions.csv")
+                    if os.path.isfile(desc_path):
+                        existing_desc = pd.read_csv(desc_path, encoding=ENCODING)
+                        dfdesc = pd.concat([existing_desc, dfdesc], ignore_index=True).drop_duplicates()
+                    dfdesc.to_csv(desc_path, index=False, encoding=ENCODING)
 
                 except Exception as e:
                     err_type = type(e).__name__
