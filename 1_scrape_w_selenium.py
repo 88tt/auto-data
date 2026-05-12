@@ -164,10 +164,9 @@ def main():
                         continue
                     header_total_initial = _parse_total_courses(header_total_initial)
 
-                    df = su.get_course_info(driver)
-                    dfdesc = su.get_course_description(driver, df)
                     su.click_view_more_until_exhausted(driver)
-                    df = su.get_course_info(driver)  # Re-parse after tooltips: DOM can have more cards
+                    df = su.get_course_info(driver)  # Parse after all cards are loaded
+                    dfdesc = su.get_course_description(driver, df)  # Scrape descriptions for all courses
                     header_total_final = _header_total_from_page_source(driver.page_source)
 
                     n = df.shape[0]
