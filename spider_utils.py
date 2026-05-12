@@ -390,10 +390,11 @@ def get_activities_for_season(driver, season_url):
     )
     time.sleep(1)
     _open_activities_filter_panel(driver)
-    # Scope to the "Activity category" fieldset only — the panel also has Age category etc.
+    # Read all checkbox__text spans within the open filter panel.
+    # Age/other category labels (Youth, Adult etc.) won't match the ACTIVITIES filter list.
     spans = driver.find_elements(
         By.XPATH,
-        "//fieldset[.//legend[normalize-space(.)='Activity category']]"
+        "//div[contains(@class,'activity-filter-body')]"
         "//span[contains(@class,'checkbox__text')]",
     )
     return [s.text.strip() for s in spans if s.text.strip()]
