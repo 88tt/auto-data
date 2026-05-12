@@ -32,7 +32,7 @@ season = config.season
 ALL_ACTIVITIES = [
     "Swim", "Skate -", "Ski/Snowboard - ", "Sports -", "Hobbies", "Arts -",
     "Leadership", "CampTO", "Early Years", "FitnessTO", "After School",
-    "Adapted Activities",
+    "Adapted Activities", "Adapted Virtual",
 ]
 _activities_env = os.environ.get("ACTIVITIES", "").strip()
 ACTIVITIES = [a.strip() for a in _activities_env.split(",") if a.strip()] if _activities_env else ALL_ACTIVITIES
@@ -268,6 +268,11 @@ dfcrs.loc[target_series, 'program'] = 'Early Years & After School'
 '''
 dfcrs[target_series].groupby(['series','crs_name'])['Course Number'].count().reset_index().sort_values(['series','crs_name'])
 '''
+
+###################################################
+# categorize courses: Adapted Virtual → Adapted Activities
+###################################################
+dfcrs.loc[dfcrs['program'].str.contains('Adapted Virtual', case=False), 'program'] = 'Adapted Activities'
 
 ###################################################
 # extract start/ end dates and times

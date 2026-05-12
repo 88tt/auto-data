@@ -60,6 +60,15 @@ def _google_api_get(url, params, label="Google API"):
         return None
     return None
 
+# Activities filter button — same span>span structure as "Where" button.
+# Text is "Activities" when unset or "Activities (N)" when active, so use contains().
+_ACTIVITIES_FILTER_BTN_XPATH = (
+    "//button[contains(@class,'activity-filter-button')"
+    " and span[span[contains(normalize-space(),'Activities')]]]"
+)
+# "View more" inside the filter panel (same <a aria-label='View more'> as location filter).
+_FILTER_VIEW_MORE_XPATH = "//div[contains(@class,'activity-filter-body')]//a[@aria-label='View more']"
+
 # Listing pagination (Toronto Active Communities): "View more" is inside <button><span>
 # with newlines/whitespace. XPath `span[text()='View more']` does not match.
 VIEW_MORE_BUTTON_XPATH = (
@@ -67,7 +76,7 @@ VIEW_MORE_BUTTON_XPATH = (
     " | //span[normalize-space()='View more']/ancestor::button[1]"
 )
 # Large programs (1000+ rows) need many clicks; each batch can be slow to paint.
-MAX_VIEW_MORE_CLICKS = 80
+MAX_VIEW_MORE_CLICKS = 10_000  # effectively unlimited; real exit is viewed>=total or button gone
 VIEW_MORE_BUTTON_WAIT = 15
 # After each click: wait up to this long for new rows; poll frequently so fast batches finish quickly.
 POST_CLICK_MAX_WAIT = 20
@@ -263,6 +272,186 @@ def initiate_and_get_all_activities(site_slug="toronto"):
                             programs.append(a.find("span").text)
 
     return programs, driver
+
+
+def get_season_id_map(driver, site_slug):
+    """
+    Open the WHEN filter panel on the activity search page and return a dict of
+    {season_name: season_id} for every season listed. Clicks View more until all
+    seasons are visible. Use this to resolve human-readable season names to IDs
+    at runtime instead of hardcoding IDs that change each year.
+    """
+    base_url = (
+        f"https://anc.ca.apm.activecommunities.com/{site_slug}/activity/search"
+        f"?onlineSiteId=0&viewMode=list"
+    )
+    driver.get(base_url)
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, ".search-group__when, [class*='search-group']"))
+    )
+    time.sleep(1)
+
+    # Open the WHEN filter panel
+    when_btn = WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, "[aria-label*='When']"))
+    )
+    when_btn.click()
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.XPATH, "//fieldset[.//legend[normalize-space(.)='Season']]"))
+    )
+    time.sleep(0.5)
+
+    # Expand all seasons (View more loop)
+    while True:
+        try:
+            view_more = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, "//a[@aria-label='View more']"))
+            )
+            view_more.click()
+            time.sleep(0.5)
+        except (TimeoutException, NoSuchElementException):
+            break
+
+    # Read season name → id from the Season fieldset only (not Day of week etc.)
+    inputs = driver.find_elements(
+        By.XPATH,
+        "//fieldset[.//legend[normalize-space(.)='Season']]//input[@type='checkbox']",
+    )
+    season_map = {}
+    for inp in inputs:
+        sid = inp.get_attribute("value")
+        try:
+            span = inp.find_element(
+                By.XPATH, "./following-sibling::span[contains(@class,'checkbox__inner')]"
+                "/following-sibling::span[contains(@class,'checkbox__text')]",
+            )
+            name = span.text.strip()
+        except NoSuchElementException:
+            try:
+                name = inp.find_element(By.XPATH, "./ancestor::label[1]").text.strip()
+            except NoSuchElementException:
+                continue
+        if sid and name:
+            season_map[name] = sid
+    return season_map
+
+
+def open_search_with_season(driver, site_slug, season_id):
+    """Navigate to the activity search page pre-filtered by season_id (e.g. 21 = Summer 2026)."""
+    url = (
+        f"https://anc.ca.apm.activecommunities.com/{site_slug}/activity/search"
+        f"?onlineSiteId=0&season_ids={season_id}&viewMode=list"
+    )
+    for attempt in range(3):
+        try:
+            driver.get(url)
+            break
+        except Exception:
+            if attempt == 2:
+                raise
+            time.sleep(2)
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, ".activity-results-header__total, [class*='search-group']"))
+    )
+    time.sleep(1)
+
+
+def _open_activities_filter_panel(driver):
+    """Click the Activities filter button and expand with View more (repeated) to show all options."""
+    btn = WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.element_to_be_clickable((By.XPATH, _ACTIVITIES_FILTER_BTN_XPATH))
+    )
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+    driver.execute_script("arguments[0].click();", btn)
+    # Wait until at least one checkbox appears (panel rendered)
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.CLASS_NAME, "checkbox__text"))
+    )
+    while True:
+        try:
+            view_more = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, _FILTER_VIEW_MORE_XPATH))
+            )
+            view_more.click()
+            time.sleep(1)
+        except (TimeoutException, NoSuchElementException):
+            break
+    time.sleep(0.5)  # let final batch of items render
+
+
+def get_activities_for_season(driver, season_url):
+    """
+    Navigate to season_url, open the Activities filter panel, and return all activity
+    names from the "Activity category" fieldset only (excludes Age category etc.).
+    """
+    driver.get(season_url)
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, ".activity-results-header__total, [class*='search-group']"))
+    )
+    time.sleep(1)
+    _open_activities_filter_panel(driver)
+    # Read all checkbox__text spans within the open filter panel.
+    # Age/other category labels (Youth, Adult etc.) won't match the ACTIVITIES filter list.
+    spans = driver.find_elements(
+        By.XPATH,
+        "//div[contains(@class,'activity-filter-body')]"
+        "//span[contains(@class,'checkbox__text')]",
+    )
+    return [s.text.strip() for s in spans if s.text.strip()]
+
+
+def choose_activity_by_filter_checkbox(driver, activity_name, season_url):
+    """
+    Select a single activity via the Activities filter checkbox panel.
+    Navigates back to season_url first to reset state, then opens the Activities
+    filter, checks the matching checkbox, and clicks Apply.
+    Returns the header total count string (same as choose_activity).
+    """
+    driver.get(season_url)
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, ".activity-results-header__total, [class*='search-group']"))
+    )
+    time.sleep(1)
+
+    _open_activities_filter_panel(driver)
+
+    safe_name = _xpath_escape(activity_name)
+    try:
+        checkbox_span = WebDriverWait(driver, WAIT_TIMEOUT).until(
+            EC.presence_of_element_located((By.XPATH,
+                f"//span[contains(@class,'checkbox__text') and normalize-space(.)='{safe_name}']"
+            ))
+        )
+    except TimeoutException:
+        # Activity not offered in this season — caller should skip, not treat as error.
+        return None
+
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", checkbox_span)
+    parent = checkbox_span.find_element(By.XPATH, "./..")
+    try:
+        checkbox_input = parent.find_element(By.XPATH, "preceding-sibling::input")
+    except NoSuchElementException:
+        checkbox_input = parent.find_element(By.XPATH, "./input | ../input")
+
+    if not checkbox_input.is_selected():
+        driver.execute_script("arguments[0].click();", checkbox_input)
+
+    apply_btn = WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.element_to_be_clickable((By.XPATH,
+            "//button[span[span[text()='Apply']]] | //button[normalize-space()='Apply']"
+        ))
+    )
+    apply_btn.click()
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.CLASS_NAME, "activity-results-header__total"))
+    )
+    time.sleep(1)
+
+    try:
+        total_el = driver.find_element(By.CLASS_NAME, "activity-results-header__total")
+        return total_el.find_element(By.TAG_NAME, "b").text
+    except NoSuchElementException:
+        return "0"
 
 
 def choose_activity(driver, activity_name):
