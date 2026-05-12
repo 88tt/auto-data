@@ -274,6 +274,68 @@ def initiate_and_get_all_activities(site_slug="toronto"):
     return programs, driver
 
 
+def get_season_id_map(driver, site_slug):
+    """
+    Open the WHEN filter panel on the activity search page and return a dict of
+    {season_name: season_id} for every season listed. Clicks View more until all
+    seasons are visible. Use this to resolve human-readable season names to IDs
+    at runtime instead of hardcoding IDs that change each year.
+    """
+    base_url = (
+        f"https://anc.ca.apm.activecommunities.com/{site_slug}/activity/search"
+        f"?onlineSiteId=0&viewMode=list"
+    )
+    driver.get(base_url)
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, ".search-group__when, [class*='search-group']"))
+    )
+    time.sleep(1)
+
+    # Open the WHEN filter panel
+    when_btn = WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, "[aria-label*='When']"))
+    )
+    when_btn.click()
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.XPATH, "//fieldset[.//legend[normalize-space(.)='Season']]"))
+    )
+    time.sleep(0.5)
+
+    # Expand all seasons (View more loop)
+    while True:
+        try:
+            view_more = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, "//a[@aria-label='View more']"))
+            )
+            view_more.click()
+            time.sleep(0.5)
+        except (TimeoutException, NoSuchElementException):
+            break
+
+    # Read season name → id from the Season fieldset only (not Day of week etc.)
+    inputs = driver.find_elements(
+        By.XPATH,
+        "//fieldset[.//legend[normalize-space(.)='Season']]//input[@type='checkbox']",
+    )
+    season_map = {}
+    for inp in inputs:
+        sid = inp.get_attribute("value")
+        try:
+            span = inp.find_element(
+                By.XPATH, "./following-sibling::span[contains(@class,'checkbox__inner')]"
+                "/following-sibling::span[contains(@class,'checkbox__text')]",
+            )
+            name = span.text.strip()
+        except NoSuchElementException:
+            try:
+                name = inp.find_element(By.XPATH, "./ancestor::label[1]").text.strip()
+            except NoSuchElementException:
+                continue
+        if sid and name:
+            season_map[name] = sid
+    return season_map
+
+
 def open_search_with_season(driver, site_slug, season_id):
     """Navigate to the activity search page pre-filtered by season_id (e.g. 21 = Summer 2026)."""
     url = (

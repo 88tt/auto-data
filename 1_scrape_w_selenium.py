@@ -39,12 +39,20 @@ ACTIVITIES = [a.strip() for a in ACTIVITIES if a.strip()]
 ACTIVITY_FILTER = os.environ.get("ACTIVITY_FILTER", "")
 # Site slug: path segment in Active Communities URL (e.g. toronto, vaughan).
 SITE_SLUG = os.environ.get("SITE_SLUG", "toronto")
-# Season IDs for the WHEN filter — comma-separated list to scrape multiple seasons in one run.
-# Known Toronto IDs: 21=Summer 2026, 23=Leadership 2026, 14=ARC 2025/2026.
-# SEASON_ID (singular) is kept for backward compat; SEASON_IDS takes precedence if set.
-SEASON_ID = os.environ.get("SEASON_ID", "21")
+# Season names to scrape — matched against the WHEN panel labels at runtime so IDs
+# don't need to be updated each year.  Substring match (case-insensitive).
+SEASON_NAMES = [
+    s.strip()
+    for s in os.environ.get(
+        "SEASON_NAMES",
+        "Summer 2026,CampTO 2026,Leadership 2026,ARC 2026/2027",
+    ).split(",")
+    if s.strip()
+]
+# SEASON_IDS: explicit override — skips name lookup. Use for testing or when a
+# season name is ambiguous.  Takes precedence over SEASON_NAMES if set.
 _season_ids_env = os.environ.get("SEASON_IDS", "").strip()
-SEASON_IDS = [s.strip() for s in _season_ids_env.split(",") if s.strip()] if _season_ids_env else [SEASON_ID]
+SEASON_IDS_OVERRIDE = [s.strip() for s in _season_ids_env.split(",") if s.strip()]
 
 ENCODING = "utf-8"
 
@@ -91,13 +99,31 @@ def main():
         print("No activity filters configured (ACTIVITIES or ACTIVITY_FILTER).")
         return
 
-    multi_season = len(SEASON_IDS) > 1
     _, driver = su.initiate_and_get_all_activities(SITE_SLUG)
     try:
-        print(f"City: {CITY}, site: {SITE_SLUG}, seasons: {SEASON_IDS}, output: {output_dir}")
+        if SEASON_IDS_OVERRIDE:
+            season_ids = SEASON_IDS_OVERRIDE
+            print(f"Using explicit SEASON_IDS override: {season_ids}")
+        else:
+            season_map = su.get_season_id_map(driver, SITE_SLUG)
+            print(f"Available seasons on site: {season_map}")
+            season_ids = []
+            for name in SEASON_NAMES:
+                matches = {k: v for k, v in season_map.items() if name.lower() in k.lower()}
+                if matches:
+                    season_ids.extend(matches.values())
+                    print(f"  Resolved {name!r} → {matches}")
+                else:
+                    print(f"  Warning: no season found matching {name!r} — skipping")
+            if not season_ids:
+                print("No seasons resolved. Check SEASON_NAMES matches labels in the WHEN panel.")
+                return
+
+        multi_season = len(season_ids) > 1
+        print(f"City: {CITY}, site: {SITE_SLUG}, seasons: {season_ids}, output: {output_dir}")
         print(f"Activity filters: {filters_to_use}")
 
-        for season_id in SEASON_IDS:
+        for season_id in season_ids:
             season_url = (
                 f"https://anc.ca.apm.activecommunities.com/{SITE_SLUG}/activity/search"
                 f"?onlineSiteId=0&season_ids={season_id}&viewMode=list"
