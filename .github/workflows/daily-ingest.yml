@@ -414,6 +414,13 @@ jobs:
           print(f"\n{non_empty}/{len(sport_files)} files have data, {total_no_loc} sessions missing location")
           EOF
 
+      - name: Upload exported JSON as artifact
+        if: needs.insert.result == 'success' || needs.insert.result == 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: exported-json-${{ github.run_id }}
+          path: target/public/data/
+
       - name: Commit and push to target
         if: (needs.insert.result == 'success' || needs.insert.result == 'skipped') && github.event.inputs.dry_run != 'true'
         working-directory: target
