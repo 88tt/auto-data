@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       year_and_season:
-        description: "Season identifier (e.g. 2026s2To)"
+        description: "Season identifier (e.g. 2026s3To)"
         required: false
-        default: "2026s2To"
+        default: "2026s3To"
       season_names:
         description: "Comma-separated season names to scrape (matched against WHEN panel labels at runtime)"
         required: false
@@ -26,7 +26,7 @@ on:
 
 env:
   # Documented pattern for workflow_dispatch + schedule (inputs empty on schedule).
-  YEAR_AND_SEASON: ${{ github.event.inputs.year_and_season || '2026s2To' }}
+  YEAR_AND_SEASON: ${{ github.event.inputs.year_and_season || '2026s3To' }}
   SEASON_NAMES: ${{ github.event.inputs.season_names || 'Summer 2026,CampTO 2026,Leadership 2026,ARC 2026/2027' }}
   STARTDATE_CUTOFF: "2026-03-01"
   CITY: "To"
