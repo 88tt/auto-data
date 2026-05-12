@@ -60,18 +60,14 @@ def _google_api_get(url, params, label="Google API"):
         return None
     return None
 
-# XPath for the Activities filter panel button (search page sidebar, not a card).
-# Tries the "When"/"Activities" search-group button pattern used by the Active Communities UI.
+# Activities filter button — same span>span structure as "Where" button.
+# Text is "Activities" when unset or "Activities (N)" when active, so use contains().
 _ACTIVITIES_FILTER_BTN_XPATH = (
-    "//button[.//span[normalize-space()='Activities'] and not(ancestor::div[contains(@class,'activity-container')])]"
+    "//button[contains(@class,'activity-filter-button')"
+    " and span[span[contains(normalize-space(),'Activities')]]]"
 )
-# "View more" inside the filter panel (link, not the listing pagination button).
-_FILTER_VIEW_MORE_XPATH = (
-    "//a[@aria-label='View more']"
-    " | //button[not(ancestor::div[contains(@class,'load-more')])"
-    "  and not(ancestor::div[contains(@class,'activity-container')])"
-    "  and .//span[normalize-space()='View more']]"
-)
+# "View more" inside the filter panel (same <a aria-label='View more'> as location filter).
+_FILTER_VIEW_MORE_XPATH = "//a[@aria-label='View more']"
 
 # Listing pagination (Toronto Active Communities): "View more" is inside <button><span>
 # with newlines/whitespace. XPath `span[text()='View more']` does not match.
