@@ -11,6 +11,10 @@ on:
         description: "Season identifier (e.g. 2026s2To)"
         required: false
         default: "2026s2To"
+      season_id:
+        description: "Active Communities season_ids param (e.g. 21 = Summer 2026)"
+        required: false
+        default: "21"
       export_only:
         description: "Skip scrape + insert; export from DB only"
         type: boolean
@@ -23,6 +27,7 @@ on:
 env:
   # Documented pattern for workflow_dispatch + schedule (inputs empty on schedule).
   YEAR_AND_SEASON: ${{ github.event.inputs.year_and_season || '2026s2To' }}
+  SEASON_ID: ${{ github.event.inputs.season_id || '21' }}
   STARTDATE_CUTOFF: "2026-03-01"
   CITY: "To"
   CHROME_HEADLESS: "1"

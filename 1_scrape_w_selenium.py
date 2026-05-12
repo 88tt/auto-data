@@ -38,6 +38,8 @@ ACTIVITIES = [a.strip() for a in ACTIVITIES if a.strip()]
 ACTIVITY_FILTER = os.environ.get("ACTIVITY_FILTER", "")
 # Site slug: path segment in Active Communities URL (e.g. toronto, vaughan).
 SITE_SLUG = os.environ.get("SITE_SLUG", "toronto")
+# Season ID for the WHEN filter (e.g. 21 = Summer 2026 for Toronto).
+SEASON_ID = os.environ.get("SEASON_ID", "21")
 
 ENCODING = "utf-8"
 
@@ -80,8 +82,12 @@ def main():
         return
 
     programs, driver = su.initiate_and_get_all_activities(SITE_SLUG)
+    season_url = (
+        f"https://anc.ca.apm.activecommunities.com/{SITE_SLUG}/activity/search"
+        f"?onlineSiteId=0&season_ids={SEASON_ID}&viewMode=list"
+    )
     try:
-        print(f"City: {CITY}, site: {SITE_SLUG}, output: {output_dir}")
+        print(f"City: {CITY}, site: {SITE_SLUG}, season_id: {SEASON_ID}, output: {output_dir}")
         print(f"Looping through {len(filters_to_use)} activity filter(s): {filters_to_use}")
 
         for activity_filter in filters_to_use:
@@ -99,7 +105,7 @@ def main():
                 os.makedirs(folder, exist_ok=True)
 
                 try:
-                    header_total_initial = su.choose_activity_and_location(driver, activity_name)
+                    header_total_initial = su.choose_activity_by_filter_checkbox(driver, activity_name, season_url)
                     header_total_initial = _parse_total_courses(header_total_initial)
 
                     df = su.get_course_info(driver)

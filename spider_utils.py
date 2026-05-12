@@ -60,6 +60,19 @@ def _google_api_get(url, params, label="Google API"):
         return None
     return None
 
+# XPath for the Activities filter panel button (search page sidebar, not a card).
+# Tries the "When"/"Activities" search-group button pattern used by the Active Communities UI.
+_ACTIVITIES_FILTER_BTN_XPATH = (
+    "//button[.//span[normalize-space()='Activities'] and not(ancestor::div[contains(@class,'activity-container')])]"
+)
+# "View more" inside the filter panel (link, not the listing pagination button).
+_FILTER_VIEW_MORE_XPATH = (
+    "//a[@aria-label='View more']"
+    " | //button[not(ancestor::div[contains(@class,'load-more')])"
+    "  and not(ancestor::div[contains(@class,'activity-container')])"
+    "  and .//span[normalize-space()='View more']]"
+)
+
 # Listing pagination (Toronto Active Communities): "View more" is inside <button><span>
 # with newlines/whitespace. XPath `span[text()='View more']` does not match.
 VIEW_MORE_BUTTON_XPATH = (
@@ -263,6 +276,97 @@ def initiate_and_get_all_activities(site_slug="toronto"):
                             programs.append(a.find("span").text)
 
     return programs, driver
+
+
+def open_search_with_season(driver, site_slug, season_id):
+    """Navigate to the activity search page pre-filtered by season_id (e.g. 21 = Summer 2026)."""
+    url = (
+        f"https://anc.ca.apm.activecommunities.com/{site_slug}/activity/search"
+        f"?onlineSiteId=0&season_ids={season_id}&viewMode=list"
+    )
+    for attempt in range(3):
+        try:
+            driver.get(url)
+            break
+        except Exception:
+            if attempt == 2:
+                raise
+            time.sleep(2)
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, ".activity-results-header__total, [class*='search-group']"))
+    )
+    time.sleep(1)
+
+
+def _open_activities_filter_panel(driver):
+    """Click the Activities filter button and expand with View more to show all options."""
+    btn = WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.element_to_be_clickable((By.XPATH, _ACTIVITIES_FILTER_BTN_XPATH))
+    )
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+    btn.click()
+    time.sleep(0.5)
+    try:
+        view_more = WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.XPATH, _FILTER_VIEW_MORE_XPATH))
+        )
+        view_more.click()
+        time.sleep(1)
+    except (TimeoutException, NoSuchElementException):
+        pass
+
+
+def choose_activity_by_filter_checkbox(driver, activity_name, season_url):
+    """
+    Select a single activity via the Activities filter checkbox panel.
+    Navigates back to season_url first to reset state, then opens the Activities
+    filter, checks the matching checkbox, and clicks Apply.
+    Returns the header total count string (same as choose_activity).
+    """
+    driver.get(season_url)
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, ".activity-results-header__total, [class*='search-group']"))
+    )
+    time.sleep(1)
+
+    _open_activities_filter_panel(driver)
+
+    safe_name = _xpath_escape(activity_name)
+    try:
+        checkbox_span = WebDriverWait(driver, WAIT_TIMEOUT).until(
+            EC.presence_of_element_located((By.XPATH,
+                f"//span[contains(@class,'checkbox__text') and normalize-space(text())='{safe_name}']"
+            ))
+        )
+    except TimeoutException:
+        raise NoSuchElementException(f"Activity checkbox not found in filter panel: {activity_name!r}")
+
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", checkbox_span)
+    parent = checkbox_span.find_element(By.XPATH, "./..")
+    try:
+        checkbox_input = parent.find_element(By.XPATH, "preceding-sibling::input")
+    except NoSuchElementException:
+        checkbox_input = parent.find_element(By.XPATH, "./input | ../input")
+
+    if not checkbox_input.is_selected():
+        driver.execute_script("arguments[0].click();", checkbox_input)
+
+    apply_btn = WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.element_to_be_clickable((By.XPATH,
+            "//button[span[span[text()='Apply']]] | //button[normalize-space()='Apply']"
+        ))
+    )
+    apply_btn.click()
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.CLASS_NAME, "activity-results-header__total"))
+    )
+    time.sleep(1)
+
+    try:
+        total_el = driver.find_element(By.CLASS_NAME, "activity-results-header__total")
+        return total_el.find_element(By.TAG_NAME, "b").text
+    except NoSuchElementException:
+        return "0"
 
 
 def choose_activity(driver, activity_name):
