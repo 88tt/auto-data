@@ -295,21 +295,25 @@ def open_search_with_season(driver, site_slug, season_id):
 
 
 def _open_activities_filter_panel(driver):
-    """Click the Activities filter button and expand with View more to show all options."""
+    """Click the Activities filter button and expand with View more (repeated) to show all options."""
     btn = WebDriverWait(driver, WAIT_TIMEOUT).until(
         EC.element_to_be_clickable((By.XPATH, _ACTIVITIES_FILTER_BTN_XPATH))
     )
     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
     btn.click()
-    time.sleep(0.5)
-    try:
-        view_more = WebDriverWait(driver, 5).until(
-            EC.element_to_be_clickable((By.XPATH, _FILTER_VIEW_MORE_XPATH))
-        )
-        view_more.click()
-        time.sleep(1)
-    except (TimeoutException, NoSuchElementException):
-        pass
+    # Wait until at least one checkbox appears (panel rendered)
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.CLASS_NAME, "checkbox__text"))
+    )
+    while True:
+        try:
+            view_more = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, _FILTER_VIEW_MORE_XPATH))
+            )
+            view_more.click()
+            time.sleep(0.5)
+        except (TimeoutException, NoSuchElementException):
+            break
 
 
 def choose_activity_by_filter_checkbox(driver, activity_name, season_url):
@@ -331,7 +335,7 @@ def choose_activity_by_filter_checkbox(driver, activity_name, season_url):
     try:
         checkbox_span = WebDriverWait(driver, WAIT_TIMEOUT).until(
             EC.presence_of_element_located((By.XPATH,
-                f"//span[contains(@class,'checkbox__text') and normalize-space(text())='{safe_name}']"
+                f"//span[contains(@class,'checkbox__text') and normalize-space(.)='{safe_name}']"
             ))
         )
     except TimeoutException:
