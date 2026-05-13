@@ -550,7 +550,8 @@ dfcrs_equiv["Course Number"] = dfcrs_equiv["barcode"]
 dfcrs_equiv["program"] = dfcrs_equiv["program_db"].fillna(dfcrs_equiv["program_scr"])
 dfcrs_equiv["series"] = dfcrs_equiv["series_db"].fillna(dfcrs_equiv["series_scr"])
 dfcrs_equiv["crs_name"] = dfcrs_equiv["crs_name_db"].fillna(dfcrs_equiv["crs_name_scr"])
-dfcrs_equiv["Description"] = dfcrs_equiv["description_db"].fillna(dfcrs_equiv["Description_scr"])
+_db_desc = dfcrs_equiv["description_db"].fillna("").str.strip()
+dfcrs_equiv["Description"] = _db_desc.where(_db_desc != "", dfcrs_equiv["Description_scr"])
 
 dfcrs_equiv = dfcrs_equiv[
     [

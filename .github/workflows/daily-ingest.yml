@@ -2,9 +2,9 @@ name: Daily Ingest - Registered Programs
 
 # Scheduled runs use this workflow file from the default branch only (GitHub requirement).
 on:
-  schedule:
-    # 09:30 Toronto during EDT (Mar–Nov): 13:30 UTC. Winter EST: use "30 14 * * *" instead.
-    - cron: "30 13 * * *"
+  # schedule:
+  #   # 09:30 Toronto during EDT (Mar–Nov): 13:30 UTC. Winter EST: use "30 14 * * *" instead.
+  #   - cron: "30 13 * * *"
   workflow_dispatch:
     inputs:
       year_and_season:
