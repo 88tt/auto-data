@@ -179,10 +179,11 @@ jobs:
           pattern = f"%{escaped}%"
 
           db_barcodes = set()
+          db_error = None
           try:
               engine = create_engine(
                   os.environ["DATABASE_URL"],
-                  connect_args={"connect_timeout": 10},
+                  connect_args={"connect_timeout": 30},
               )
               with engine.connect() as conn:
                   rows = conn.execute(
@@ -196,13 +197,13 @@ jobs:
               db_barcodes = {r[0] for r in rows}
               print(f"DB barcodes in scope: {len(db_barcodes)}")
           except Exception as exc:
+              db_error = str(exc)
               print(f"DB connection failed: {exc}")
-              sys.exit(0)
 
           # ── 4. Compute diff ───────────────────────────────────────────────────
-          only_csv = sorted(csv_barcodes - db_barcodes)
-          only_db  = sorted(db_barcodes  - csv_barcodes)
-          ok = len(only_csv) == 0
+          only_csv = sorted(csv_barcodes - db_barcodes) if not db_error else []
+          only_db  = sorted(db_barcodes  - csv_barcodes) if not db_error else []
+          ok = len(only_csv) == 0 and not db_error
 
           result = {
               "csv":         len(csv_barcodes),
@@ -211,15 +212,19 @@ jobs:
               "db_only":     len(only_db),
               "ok":          ok,
               "sample_lost": only_csv[:15],
+              "error":       db_error,
           }
 
-          # ── 5. Write losslessness_insert.json ─────────────────────────────────
-          # Determine output dir: same directory as dfcrs.csv (season dir)
+          # ── 5. Write losslessness_insert.json (always, even on DB error) ───────
           season_dir = os.path.dirname(dfcrs_path)
           out_path = os.path.join(season_dir, "losslessness_insert.json")
           with open(out_path, "w") as f:
               json.dump(result, f, indent=2)
           print(f"Written: {out_path}")
+
+          if db_error:
+              print("Skipping losslessness diff — DB unavailable")
+              sys.exit(0)
 
           # ── 6. Append to GITHUB_STEP_SUMMARY ─────────────────────────────────
           if summary_path:
@@ -258,6 +263,7 @@ jobs:
           EOF
 
       - name: Upload combined dfcrs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dfcrs-combined
@@ -478,7 +484,7 @@ jobs:
                   cutoff = pd.Timestamp(STARTDATE_CUTOFF)
                   escaped = _like_escape(pk_prefix)
                   pattern = f"%{escaped}%"
-                  engine = create_engine(db_url, connect_args={"connect_timeout": 10})
+                  engine = create_engine(db_url, connect_args={"connect_timeout": 30})
                   with engine.connect() as conn:
                       row = conn.execute(
                           text(
