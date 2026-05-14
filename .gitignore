@@ -5,6 +5,7 @@ __pycache__/
 env/
 venv/
 *.csv
+!programs_desc.csv
 *.txt
 !requirements.txt
 raw_data/

@@ -137,10 +137,10 @@ except NameError:
 _sibling_public_data = _project_dir.parent / "kebu-lite" / "public" / "data"
 _default_out = _sibling_public_data if _sibling_public_data.is_dir() else (_project_dir / "output")
 OUT_DIR = Path(os.environ.get("OUT_DIR", _default_out))
-# Path to programs_desc.csv (optional); if present, exported as programs.json (in same scrape run as config.season).
+# Path to programs_desc.csv (optional); committed to repo root so it survives across scrape runs.
 PROGRAMS_CSV = os.environ.get(
     "PROGRAMS_CSV",
-    str(Path(config.season) / "programs_desc.csv"),
+    str(_project_dir / "programs_desc.csv"),
 )
 EXPORT_LATEST_SCRAPE_ONLY = bool(
     os.environ.get("EXPORT_LATEST_SCRAPE_ONLY", str(config.EXPORT_LATEST_SCRAPE_ONLY)).strip().lower()
