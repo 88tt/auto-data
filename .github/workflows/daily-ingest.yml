@@ -313,7 +313,8 @@ jobs:
           season   = os.environ["YEAR_AND_SEASON"]
           data_dir = "target/public/data"
           counts_path = os.path.join(data_dir, "export_counts.json")
-          DROP_THRESHOLD = 0.40   # fail if any program loses > 40 % of sessions
+          DROP_THRESHOLD = 0.20   # fail if any program loses > 20% of sessions
+          ZERO_SESSION_MIN = 5    # programs with >= this many sessions before cannot drop to 0
 
           try:
               prev = {r["program"]: r["sessions"] for r in json.load(open(counts_path))["counts"]}
@@ -336,7 +337,9 @@ jobs:
               except Exception:
                   continue
               old_count = prev[program]
-              if old_count > 0:
+              if old_count >= ZERO_SESSION_MIN and new_count == 0:
+                  errors.append(f"{program}: {old_count} → 0 sessions (complete wipeout)")
+              elif old_count > 0:
                   drop = (old_count - new_count) / old_count
                   if drop > DROP_THRESHOLD:
                       errors.append(f"{program}: {old_count} → {new_count} sessions ({drop:.0%} drop)")
@@ -511,12 +514,18 @@ jobs:
           else:
               print("DATABASE_URL not set — skipping DB→JSON losslessness check")
 
-          # Description coverage soft warning (not added to errors)
+          # Description coverage: hard fail if > 5% missing, soft warning otherwise
+          DESC_MISSING_THRESHOLD = 0.05
           if total_sessions > 0 and total_desc_missing > 0:
               pct = total_desc_missing / total_sessions * 100
-              desc_warnings.append(
-                  f"Description coverage: {total_desc_missing}/{total_sessions} sessions missing desc ({pct:.1f}%)"
-              )
+              if total_desc_missing / total_sessions > DESC_MISSING_THRESHOLD:
+                  errors.append(
+                      f"Description coverage: {total_desc_missing}/{total_sessions} sessions missing desc ({pct:.1f}%) — exceeds {DESC_MISSING_THRESHOLD:.0%} threshold"
+                  )
+              else:
+                  desc_warnings.append(
+                      f"Description coverage: {total_desc_missing}/{total_sessions} sessions missing desc ({pct:.1f}%)"
+                  )
 
           # ── 3. Write $GITHUB_STEP_SUMMARY ─────────────────────────────────────
           if summary_path:
