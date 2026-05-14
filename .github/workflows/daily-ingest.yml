@@ -127,6 +127,136 @@ jobs:
         run: python 2_clean_data.py
         # No ACTIVITIES set — defaults to all activities, writes combined dfcrs.csv
 
+      - name: Check dfcrs → DB losslessness
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python - <<'EOF'
+          import glob, json, os, sys
+          import pandas as pd
+          from sqlalchemy import create_engine, text
+
+          YEAR_AND_SEASON   = os.environ["YEAR_AND_SEASON"]
+          STARTDATE_CUTOFF  = os.environ.get("STARTDATE_CUTOFF", "2026-03-01")
+          pk_prefix         = f"{YEAR_AND_SEASON}_%_"
+          cutoff            = pd.Timestamp(STARTDATE_CUTOFF)
+          summary_path      = os.environ.get("GITHUB_STEP_SUMMARY", "")
+
+          # ── 1. Find the latest dfcrs.csv ──────────────────────────────────────
+          csv_files = glob.glob("raw_data/**/dfcrs.csv", recursive=True)
+          if not csv_files:
+              print("No dfcrs.csv found under raw_data/ — skipping losslessness check")
+              sys.exit(0)
+          dfcrs_path = sorted(csv_files)[-1]
+          print(f"Using dfcrs.csv: {dfcrs_path}")
+
+          # ── 2. Build CSV barcode set (same scope as script 3) ─────────────────
+          dfcrs = pd.read_csv(dfcrs_path)
+          dfcrs["start_date"] = pd.to_datetime(dfcrs["start_date"])
+          _truthy = {"1", "true", "t", "yes", "y"}
+          if "has_enroll_now" in dfcrs.columns:
+              has_enroll_now = dfcrs["has_enroll_now"].fillna(False).apply(
+                  lambda v: str(v).strip().lower() in _truthy if not isinstance(v, bool) else v
+              )
+          else:
+              has_enroll_now = pd.Series(False, index=dfcrs.index)
+          mask = (dfcrs["start_date"] >= cutoff) | has_enroll_now
+          dfcrs_sess = dfcrs[mask & dfcrs["Location"].notna()].copy()
+          dfcrs_sess["Course Number"] = dfcrs_sess["Course Number"].astype(str)
+          dfcrs_sess["barcode"] = (
+              dfcrs_sess["program"]
+              + pk_prefix
+              + dfcrs_sess["Course Number"].str.replace("#", "", regex=False)
+          )
+          csv_barcodes = set(dfcrs_sess["barcode"].tolist())
+          print(f"CSV barcodes in scope: {len(csv_barcodes)}")
+
+          # ── 3. Query DB for barcodes ──────────────────────────────────────────
+          def _like_escape(s):
+              return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+          escaped = _like_escape(pk_prefix)
+          pattern = f"%{escaped}%"
+
+          db_barcodes = set()
+          try:
+              engine = create_engine(
+                  os.environ["DATABASE_URL"],
+                  connect_args={"connect_timeout": 10},
+              )
+              with engine.connect() as conn:
+                  rows = conn.execute(
+                      text(
+                          "SELECT barcode FROM activities_sessions "
+                          "WHERE barcode LIKE :p ESCAPE '\\\\' "
+                          "AND (start_date >= :c OR has_enroll_now = TRUE)"
+                      ),
+                      {"p": pattern, "c": cutoff},
+                  ).fetchall()
+              db_barcodes = {r[0] for r in rows}
+              print(f"DB barcodes in scope: {len(db_barcodes)}")
+          except Exception as exc:
+              print(f"DB connection failed: {exc}")
+              sys.exit(0)
+
+          # ── 4. Compute diff ───────────────────────────────────────────────────
+          only_csv = sorted(csv_barcodes - db_barcodes)
+          only_db  = sorted(db_barcodes  - csv_barcodes)
+          ok = len(only_csv) == 0
+
+          result = {
+              "csv":         len(csv_barcodes),
+              "db":          len(db_barcodes),
+              "csv_only":    len(only_csv),
+              "db_only":     len(only_db),
+              "ok":          ok,
+              "sample_lost": only_csv[:15],
+          }
+
+          # ── 5. Write losslessness_insert.json ─────────────────────────────────
+          # Determine output dir: same directory as dfcrs.csv (season dir)
+          season_dir = os.path.dirname(dfcrs_path)
+          out_path = os.path.join(season_dir, "losslessness_insert.json")
+          with open(out_path, "w") as f:
+              json.dump(result, f, indent=2)
+          print(f"Written: {out_path}")
+
+          # ── 6. Append to GITHUB_STEP_SUMMARY ─────────────────────────────────
+          if summary_path:
+              flag = "✅" if ok else "❌"
+              lines = [
+                  "",
+                  "## dfcrs → DB Losslessness",
+                  "",
+                  "| Metric | Count |",
+                  "|--------|------:|",
+                  f"| CSV barcodes in scope | {len(csv_barcodes)} |",
+                  f"| DB barcodes in scope  | {len(db_barcodes)} |",
+                  f"| Only in CSV (lost)    | {len(only_csv)} {flag} |",
+                  f"| Only in DB (extra)    | {len(only_db)} |",
+                  "",
+              ]
+              if only_csv:
+                  lines += [
+                      "<details><summary>Sample barcodes lost (up to 15)</summary>",
+                      "",
+                  ]
+                  for b in only_csv[:15]:
+                      lines.append(f"- `{b}`")
+                  lines += ["</details>", ""]
+              with open(summary_path, "a") as f:
+                  f.write("\n".join(lines))
+
+          # ── 7. Exit non-zero if any CSV barcodes are missing from DB ──────────
+          if only_csv:
+              print(f"\nLOSSLESSNESS FAILED: {len(only_csv)} barcodes in dfcrs not found in DB")
+              for b in only_csv[:15]:
+                  print(f"  missing: {b}")
+              sys.exit(1)
+
+          print("dfcrs → DB losslessness: OK")
+          EOF
+
       - name: Upload combined dfcrs
         uses: actions/upload-artifact@v4
         with:
@@ -225,6 +355,7 @@ jobs:
         env:
           SCRAPE_RESULT: ${{ needs.scrape.result }}
           INSERT_RESULT: ${{ needs.insert.result }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           python - <<'EOF'
           import glob, json, os, sys
@@ -243,6 +374,15 @@ jobs:
           insert_result = os.environ.get("INSERT_RESULT", "skipped")
           scrape_display = f"{_emoji.get(scrape_result, '')} {scrape_result}"
           insert_display = f"{_emoji.get(insert_result, '')} {insert_result}"
+
+          # ── 0. Load losslessness_insert.json from insert job artifact ─────────
+          import glob as _glob
+          _li_files = _glob.glob("raw_data/**/losslessness_insert.json", recursive=True)
+          _li = json.load(open(_li_files[0])) if _li_files else None
+          if _li:
+              print(f"Loaded losslessness_insert.json: csv={_li['csv']} db={_li['db']} csv_only={_li['csv_only']}")
+          else:
+              print("losslessness_insert.json not found — DB→JSON losslessness check will be partial")
 
           # ── 1. Load insert summary (found vs saved per series) ────────────────
           insert_summary = []
@@ -265,6 +405,7 @@ jobs:
           # ── 2. Validate exported JSON files ───────────────────────────────────
           sport_files = sorted(glob.glob(os.path.join(data_dir, f"*_{season}.json")))
           errors = []
+          desc_warnings = []
           if not sport_files:
               errors.append(f"No sport JSON files found matching *_{season}.json under {data_dir}")
 
@@ -272,6 +413,12 @@ jobs:
           no_loc_by_centre = defaultdict(list) # (sport, centre) -> [session_nums]
           total_sessions = 0
           non_empty = 0
+
+          # Description coverage tracking
+          desc_missing_by_program = {}         # program -> (missing_count, total_count)
+          total_desc_missing = 0
+
+          all_sessions_list = []               # collect all sessions for desc coverage
 
           for path in sport_files:
               sport = os.path.basename(path).replace(f"_{season}.json", "")
@@ -293,6 +440,13 @@ jobs:
                       no_loc_by_centre[(sport, centre)].append(sess_num)
                   export_rows.append((sport, count, len(no_loc)))
                   print(f"{os.path.relpath(path)}: {count} sessions, {len(no_loc)} no-location")
+                  # Description coverage per program
+                  missing_desc = sum(
+                      1 for s in sessions
+                      if str(s.get("desc") or "").strip() in ("", "None", "null", "nan")
+                  )
+                  desc_missing_by_program[sport] = (missing_desc, count)
+                  total_desc_missing += missing_desc
               except json.JSONDecodeError as e:
                   errors.append(f"{os.path.relpath(path)}: invalid JSON — {e}")
 
@@ -300,6 +454,69 @@ jobs:
               errors.append("All sport files are empty — scrape likely failed")
 
           total_no_loc = sum(r[2] for r in export_rows)
+
+          # ── 2b. DB → JSON losslessness check ──────────────────────────────────
+          db_json_ok = None
+          db_json_lost = None
+          db_scoped_count = None
+          expected_json = None
+
+          STARTDATE_CUTOFF = os.environ.get("STARTDATE_CUTOFF", "2026-03-01")
+          pk_prefix = f"{season}_%_"
+
+          def _like_escape(s):
+              return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+          db_url = os.environ.get("DATABASE_URL", "")
+          if db_url:
+              try:
+                  import pandas as pd
+                  from sqlalchemy import create_engine, text
+                  cutoff = pd.Timestamp(STARTDATE_CUTOFF)
+                  escaped = _like_escape(pk_prefix)
+                  pattern = f"%{escaped}%"
+                  engine = create_engine(db_url, connect_args={"connect_timeout": 10})
+                  with engine.connect() as conn:
+                      row = conn.execute(
+                          text(
+                              "SELECT COUNT(*) as n FROM activities_sessions "
+                              "WHERE barcode LIKE :p ESCAPE '\\\\' "
+                              "AND (start_date >= :cutoff OR has_enroll_now = TRUE)"
+                          ),
+                          {"p": pattern, "cutoff": cutoff},
+                      ).fetchone()
+                  db_scoped_count = row[0] if row else 0
+                  print(f"DB scoped session count: {db_scoped_count}")
+                  if _li is not None:
+                      expected_json = _li["csv"]
+                      db_json_lost = expected_json - total_sessions
+                      db_json_ok = (db_json_lost == 0)
+                      if not db_json_ok:
+                          errors.append(
+                              f"DB→JSON losslessness: expected {expected_json} sessions in JSON "
+                              f"(from dfcrs scope) but found {total_sessions} — lost={db_json_lost}"
+                          )
+                  else:
+                      # Fallback: compare DB count vs JSON count directly
+                      db_json_lost = db_scoped_count - total_sessions
+                      db_json_ok = (db_json_lost == 0)
+                      expected_json = db_scoped_count
+                      if not db_json_ok:
+                          errors.append(
+                              f"DB→JSON losslessness: DB has {db_scoped_count} scoped sessions "
+                              f"but JSON has {total_sessions} — lost={db_json_lost}"
+                          )
+              except Exception as exc:
+                  print(f"DB→JSON losslessness check failed (DB error): {exc}")
+          else:
+              print("DATABASE_URL not set — skipping DB→JSON losslessness check")
+
+          # Description coverage soft warning (not added to errors)
+          if total_sessions > 0 and total_desc_missing > 0:
+              pct = total_desc_missing / total_sessions * 100
+              desc_warnings.append(
+                  f"Description coverage: {total_desc_missing}/{total_sessions} sessions missing desc ({pct:.1f}%)"
+              )
 
           # ── 3. Write $GITHUB_STEP_SUMMARY ─────────────────────────────────────
           if summary_path:
@@ -395,6 +612,45 @@ jobs:
                       L.append(f"| {sport} | {centre} | {len(sess_nums)} | {nums_str} |")
                   L.append("")
 
+              # ── Pipeline Losslessness section ─────────────────────────────────
+              _dfcrs_db_flag = ("✅" if (_li and _li.get("ok")) else "❌") if _li else "⏭️"
+              _dfcrs_db_lost = str(_li["csv_only"]) if _li else "N/A (no artifact)"
+              if db_json_ok is None:
+                  _db_json_flag = "⏭️"
+                  _db_json_lost_str = "N/A"
+              else:
+                  _db_json_flag = "✅" if db_json_ok else "❌"
+                  _db_json_lost_str = str(db_json_lost) if db_json_lost is not None else "N/A"
+              if total_sessions > 0:
+                  _desc_pct = f"{total_desc_missing / total_sessions * 100:.1f}%"
+              else:
+                  _desc_pct = "N/A"
+              _desc_flag = "✅" if total_desc_missing == 0 else "⚠️"
+              L += [
+                  "## Pipeline Losslessness",
+                  "",
+                  "| Stage | Lost | Status |",
+                  "|-------|-----:|:------:|",
+                  f"| dfcrs → DB | {_dfcrs_db_lost} | {_dfcrs_db_flag} |",
+                  f"| DB → JSON | {_db_json_lost_str} | {_db_json_flag} |",
+                  f"| Description coverage (missing) | {total_desc_missing} ({_desc_pct}) | {_desc_flag} |",
+                  "",
+              ]
+
+              # ── Description Coverage detail section ────────────────────────────
+              if total_desc_missing > 0:
+                  L += [
+                      "## ⚠️ Description Coverage",
+                      "",
+                      "| Program | Missing Desc | Total | % |",
+                      "|---------|-------------:|------:|--:|",
+                  ]
+                  for prog, (missing, total_p) in sorted(desc_missing_by_program.items()):
+                      if missing > 0:
+                          pct_p = f"{missing / total_p * 100:.1f}%" if total_p > 0 else "N/A"
+                          L.append(f"| {prog} | {missing} | {total_p} | {pct_p} |")
+                  L.append("")
+
               if errors:
                   L += ["## ❌ Validation Errors", ""]
                   for e in errors:
@@ -410,6 +666,10 @@ jobs:
               for e in errors:
                   print(f"  - {e}")
               sys.exit(1)
+
+          if desc_warnings:
+              for w in desc_warnings:
+                  print(f"  WARNING: {w}")
 
           print(f"\n{non_empty}/{len(sport_files)} files have data, {total_no_loc} sessions missing location")
           EOF

@@ -568,6 +568,181 @@ def print_integrity_failures(r: IntegrityResult) -> None:
 
 
 # ---------------------------------------------------------------------------
+# DB → JSON losslessness + description coverage
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DbJsonLosslessnessResult:
+    json_dir_found: bool = False
+    json_dir: str = ""
+    json_total: int = 0
+    db_total_scoped: int = 0  # total DB count (includes old-run sessions)
+    csv_scope_count: int = 0  # dfcrs scope count (current run only) — preferred reference
+    dfcrs_used: bool = False  # True when csv_scope_count is from dfcrs.csv
+    lost: int = 0
+    desc_missing: int = 0
+    desc_total: int = 0
+    per_program: list[dict[str, Any]] = field(default_factory=list)
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.json_dir_found and self.lost == 0
+
+    @property
+    def desc_pct(self) -> float:
+        return (self.desc_missing / self.desc_total * 100) if self.desc_total > 0 else 0.0
+
+
+def collect_db_json_losslessness(
+    json_dir: str | None = None,
+) -> DbJsonLosslessnessResult:
+    """Check DB → JSON losslessness and description coverage.
+
+    Tries to find the JSON output directory in this order (if json_dir is None):
+      1. ../kebu-lite/public/data
+      2. OUT_DIR env var
+      3. output/{CITY}/{YEAR_AND_SEASON}/  (same as compare_output_export_barcodes)
+    """
+    res = DbJsonLosslessnessResult()
+    year_season = config.YEAR_AND_SEASON
+    cutoff = pd.Timestamp(config.STARTDATE_CUTOFF)
+
+    # ── 1. Locate JSON output directory ──────────────────────────────────────
+    if json_dir is not None:
+        candidates = [json_dir]
+    else:
+        cwd = os.getcwd()
+        candidates = [
+            os.path.abspath(os.path.join(cwd, "..", "kebu-lite", "public", "data")),
+        ]
+        out_dir_env = os.environ.get("OUT_DIR", "")
+        if out_dir_env:
+            candidates.append(out_dir_env)
+        # output/<CITY>/<YEAR_AND_SEASON>/ may contain scraped* sub-dirs; check
+        # the directory itself as well as its latest scraped* sub-dir
+        output_root = os.path.join("output", config.CITY, year_season)
+        if os.path.isdir(output_root):
+            subs = sorted(
+                d
+                for d in os.listdir(output_root)
+                if d.startswith("scraped") and os.path.isdir(os.path.join(output_root, d))
+            )
+            if subs:
+                candidates.append(os.path.join(output_root, subs[-1]))
+            candidates.append(output_root)
+
+    found_dir: str | None = None
+    for cand in candidates:
+        suffix = f"_{year_season}.json"
+        if os.path.isdir(cand) and any(f.endswith(suffix) for f in os.listdir(cand)):
+            found_dir = cand
+            break
+
+    if found_dir is None:
+        res.json_dir_found = False
+        res.error = f"No *_{year_season}.json files found in candidate dirs: {candidates}"
+        return res
+
+    res.json_dir_found = True
+    res.json_dir = found_dir
+
+    # ── 2. Sum sessions and count missing descriptions ────────────────────────
+    suffix = f"_{year_season}.json"
+    json_files = sorted(f for f in os.listdir(found_dir) if f.endswith(suffix))
+    per_program: list[dict[str, Any]] = []
+
+    for fname in json_files:
+        program = fname.replace(suffix, "")
+        try:
+            with open(os.path.join(found_dir, fname), encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            continue
+        sessions = data.get("sessionsWithCourses") or []
+        prog_total = len(sessions)
+        prog_missing = sum(
+            1
+            for s in sessions
+            if str(s.get("desc") or "").strip() in ("", "None", "null", "nan")
+        )
+        res.json_total += prog_total
+        res.desc_missing += prog_missing
+        res.desc_total += prog_total
+        per_program.append(
+            {
+                "program": program,
+                "json_count": prog_total,
+                "desc_missing": prog_missing,
+            }
+        )
+
+    # ── 3. Query DB for scoped session count ──────────────────────────────────
+    pk_prefix = config.pk_prefix
+
+    def _like_escape(s: str) -> str:
+        return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    pattern = "%" + _like_escape(pk_prefix) + "%"
+
+    try:
+        engine = create_engine(
+            config.DB_URL,
+            connect_args={"connect_timeout": 5},
+        )
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT COUNT(*) as n FROM activities_sessions
+                    WHERE barcode LIKE :p ESCAPE '\\'
+                    AND (start_date >= :cutoff OR has_enroll_now = TRUE)
+                    """
+                ),
+                {"p": pattern, "cutoff": cutoff},
+            ).fetchone()
+        res.db_total_scoped = row[0] if row else 0
+    except Exception as exc:
+        res.error = f"DB query failed: {exc}"
+        # Still return what we have from JSON
+        res.lost = 0
+        res.per_program = per_program
+        return res
+
+    # ── 4. Compute lost — prefer dfcrs scope count over DB total ─────────────
+    # DB total includes sessions from prior runs (db_only). Use dfcrs.csv scope
+    # count (distinct barcodes) as the reference — mirrors what script 3 inserts.
+    dfcrs_path = os.path.join(config.season, "dfcrs.csv")
+    if os.path.isfile(dfcrs_path):
+        try:
+            _dfcrs = pd.read_csv(dfcrs_path)
+            _dfcrs["start_date"] = pd.to_datetime(_dfcrs["start_date"], errors="coerce")
+            _mask = _dfcrs["start_date"] >= cutoff
+            if "has_enroll_now" in _dfcrs.columns:
+                _truthy = {"1", "true", "t", "yes", "y"}
+                _heo = _dfcrs["has_enroll_now"].fillna(False).apply(
+                    lambda v: str(v).strip().lower() in _truthy if not isinstance(v, bool) else v
+                )
+                _mask = _mask | _heo
+            _scope = _dfcrs[_mask & _dfcrs["Location"].notna()].copy()
+            _scope["barcode"] = (
+                _scope["program"] + pk_prefix
+                + _scope["Course Number"].astype(str).str.replace("#", "", regex=False)
+            )
+            res.csv_scope_count = len(set(_scope["barcode"]))  # distinct barcodes
+            res.dfcrs_used = True
+        except Exception:
+            res.csv_scope_count = res.db_total_scoped
+    else:
+        res.csv_scope_count = res.db_total_scoped
+
+    res.lost = res.csv_scope_count - res.json_total
+    res.per_program = per_program
+    return res
+
+
+# ---------------------------------------------------------------------------
 # Optional: compare session barcodes between two latest export JSON dirs
 # ---------------------------------------------------------------------------
 
@@ -629,7 +804,11 @@ def _tag(ok: bool | None) -> str:
     return "[--]"
 
 
-def print_overview(scrape: ScrapeHealthResult, integrity: IntegrityResult) -> None:
+def print_overview(
+    scrape: ScrapeHealthResult,
+    integrity: IntegrityResult,
+    lossless: DbJsonLosslessnessResult | None = None,
+) -> None:
     cutoff = pd.Timestamp(config.STARTDATE_CUTOFF).date()
     print("\n" + "=" * 76)
     print("  DATA PREP HEALTH")
@@ -674,11 +853,37 @@ def print_overview(scrape: ScrapeHealthResult, integrity: IntegrityResult) -> No
             f"(skipped: {integrity.skip_count()})"
         )
 
+    # Layer 4: JSON losslessness
+    if lossless is not None:
+        if not lossless.json_dir_found:
+            print(f"\n  {_tag(None)} JSON     Output dir not found — run script 4 or set OUT_DIR")
+        elif lossless.error and lossless.db_total_scoped == 0:
+            print(f"\n  {_tag(None)} JSON     {lossless.error}")
+        else:
+            desc_part = (
+                f"  |  {lossless.desc_missing} missing desc"
+                if lossless.desc_missing > 0
+                else "  |  0 missing desc"
+            )
+            ref = lossless.csv_scope_count if lossless.dfcrs_used else lossless.db_total_scoped
+            ref_label = "dfcrs scope" if lossless.dfcrs_used else "DB (scoped)"
+            if lossless.ok:
+                print(
+                    f"\n  {_tag(True)} JSON     {lossless.json_total} sessions in JSON == "
+                    f"{ref} in {ref_label}{desc_part}"
+                )
+            else:
+                print(
+                    f"\n  {_tag(False)} JSON     {lossless.json_total} sessions in JSON vs "
+                    f"{ref} in {ref_label} — lost={lossless.lost}{desc_part}"
+                )
+
     # Overall
     scrape_bad = scrape.error or (scrape.df_latest is not None and not scrape.ok)
     clean_bad = not integrity.dfcrs_exists
     db_bad = integrity.engine_ok and integrity.fail_count() > 0
-    if scrape_bad or clean_bad or db_bad:
+    json_bad = lossless is not None and lossless.json_dir_found and not lossless.ok
+    if scrape_bad or clean_bad or db_bad or json_bad:
         print("\n  " + "-" * 72)
         print("  OVERALL  Needs attention — use  python 5_check_data.py -v  for tables & samples")
         print("  " + "-" * 72)
@@ -713,8 +918,9 @@ def main(argv: list[str] | None = None) -> int:
 
     scrape = collect_scrape_health(write_csv=not args.no_write_csv)
     integrity = collect_integrity()
+    lossless = collect_db_json_losslessness()
 
-    print_overview(scrape, integrity)
+    print_overview(scrape, integrity, lossless)
 
     if verbose:
         print("\n" + "=" * 76)
@@ -737,6 +943,39 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  Written: {scrape.changes_csv}")
         compare_output_export_barcodes()
 
+        # DB → JSON losslessness per-program table
+        print("\n" + "=" * 76)
+        print("  DEEP: DB → JSON losslessness + description coverage (per program)")
+        print("=" * 76)
+        if not lossless.json_dir_found:
+            print(f"  JSON dir not found. {lossless.error or ''}")
+        else:
+            ref_label = "dfcrs scope" if lossless.dfcrs_used else "DB scoped"
+            print(f"  JSON dir: {lossless.json_dir}")
+            print(f"  {ref_label}: {lossless.csv_scope_count}  DB total: {lossless.db_total_scoped}  JSON: {lossless.json_total}  lost: {lossless.lost}")
+            if lossless.error:
+                print(f"  Warning: {lossless.error}")
+            if lossless.per_program:
+                # We don't have per-program DB counts so show json_count and desc_missing
+                prog_w = max((len(r["program"]) for r in lossless.per_program), default=10)
+                prog_w = max(prog_w, 12)
+                print(f"\n  {'PROGRAM':<{prog_w}}  {'JSON':>8}  {'DESC_MISS':>10}  {'MISS%':>7}")
+                print(f"  {'-' * prog_w}  {'--------':>8}  {'----------':>10}  {'-------':>7}")
+                for r in sorted(lossless.per_program, key=lambda x: x["program"]):
+                    pct = (
+                        f"{r['desc_missing'] / r['json_count'] * 100:.1f}%"
+                        if r["json_count"] > 0
+                        else "N/A"
+                    )
+                    print(
+                        f"  {r['program']:<{prog_w}}  {r['json_count']:>8}  "
+                        f"{r['desc_missing']:>10}  {pct:>7}"
+                    )
+                print(
+                    f"\n  {'TOTAL':<{prog_w}}  {lossless.json_total:>8}  "
+                    f"{lossless.desc_missing:>10}  {lossless.desc_pct:.1f}%"
+                )
+
     print()
     # Exit code: 1 if any hard failure on checked layers
     scrape_bad = bool(scrape.error) or (
@@ -744,7 +983,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     clean_bad = not integrity.dfcrs_exists
     db_bad = integrity.engine_ok and integrity.fail_count() > 0
-    return 1 if (scrape_bad or clean_bad or db_bad) else 0
+    json_bad = lossless.json_dir_found and not lossless.ok
+    return 1 if (scrape_bad or clean_bad or db_bad or json_bad) else 0
 
 
 if __name__ == "__main__":
