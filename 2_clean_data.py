@@ -73,6 +73,7 @@ for i, activity in enumerate(ACTIVITIES):
 if dfcrs.empty:
     raise ValueError(f"No courses loaded from {season}. Check ACTIVITIES and scraped outputs.")
 
+dfdesc = dfdesc.drop_duplicates(subset=['program', 'series', 'Name'])
 dfcrs = dfcrs.merge(dfdesc, on=['program','series','Name'], how='left')
 
 # initiate categoirzation: defaulting to Name

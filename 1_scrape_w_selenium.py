@@ -218,7 +218,7 @@ def main():
                     desc_path = os.path.join(folder, "descriptions.csv")
                     if os.path.isfile(desc_path):
                         existing_desc = pd.read_csv(desc_path, encoding=ENCODING)
-                        dfdesc = pd.concat([existing_desc, dfdesc], ignore_index=True).drop_duplicates()
+                        dfdesc = pd.concat([existing_desc, dfdesc], ignore_index=True).drop_duplicates(subset=["Name"])
                     dfdesc.to_csv(desc_path, index=False, encoding=ENCODING)
 
                 except Exception as e:
