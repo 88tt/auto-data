@@ -895,6 +895,139 @@ def print_overview(
         print("           Deeper:  -v  (integrity)   --deep  (+ scrape table, paths, export diffs)")
 
 
+def write_step_summary(
+    scrape: ScrapeHealthResult,
+    integrity: "IntegrityResult",
+    lossless: "DbJsonLosslessnessResult | None",
+    *,
+    deep: bool = False,
+) -> None:
+    """Append a markdown health-check section to GITHUB_STEP_SUMMARY if set."""
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "")
+    if not summary_path:
+        return
+
+    scrape_bad = bool(scrape.error) or (scrape.df_latest is None or scrape.df_latest.empty or not scrape.ok)
+    clean_bad = not integrity.dfcrs_exists
+    db_bad = integrity.engine_ok and integrity.fail_count() > 0
+    json_bad = lossless is not None and lossless.json_dir_found and not lossless.ok
+    overall_ok = not (scrape_bad or clean_bad or db_bad or json_bad)
+    overall_icon = "✅" if overall_ok else "❌"
+
+    L: list[str] = [
+        "",
+        f"## {overall_icon} Pipeline Health Check (script 5)",
+        "",
+        "| Layer | Status | Detail |",
+        "|-------|:------:|--------|",
+    ]
+
+    # Scrape layer
+    if scrape.error:
+        L.append(f"| Scrape | ❌ | {scrape.error} |")
+    elif scrape.df_latest is None or scrape.df_latest.empty:
+        L.append("| Scrape | ⚠️ | No scrape data found |")
+    elif scrape.ok:
+        total = len(scrape.df_latest)
+        L.append(f"| Scrape | ✅ | {total} activities — all header counts matched |")
+    else:
+        mismatches = scrape.mismatch_count()
+        missing = scrape.missing_json_count()
+        detail = f"{mismatches} mismatches"
+        if missing:
+            detail += f", {missing} missing scrape_counts.json"
+        L.append(f"| Scrape | ❌ | {detail} |")
+
+    # Clean/dfcrs layer
+    if clean_bad:
+        L.append("| Clean (dfcrs.csv) | ❌ | dfcrs.csv not found |")
+    else:
+        L.append("| Clean (dfcrs.csv) | ✅ | dfcrs.csv present |")
+
+    # DB integrity layer
+    if not integrity.engine_ok:
+        L.append("| DB integrity | ⏭️ | DB not checked |")
+    elif db_bad:
+        fails = integrity.fail_count()
+        L.append(f"| DB integrity | ❌ | {fails} checks failed |")
+    else:
+        L.append("| DB integrity | ✅ | All checks passed |")
+
+    # JSON losslessness layer
+    if lossless is None or not lossless.json_dir_found:
+        L.append("| JSON losslessness | ⏭️ | JSON output dir not found |")
+    elif json_bad:
+        desc_part = f" | {lossless.desc_missing} missing desc" if lossless.desc_missing > 0 else ""
+        L.append(f"| JSON losslessness | ❌ | lost={lossless.lost}{desc_part} |")
+    else:
+        desc_flag = "⚠️" if lossless.desc_missing > 0 else "✅"
+        desc_part = f" | {desc_flag} {lossless.desc_missing} missing desc" if lossless.desc_missing > 0 else " | 0 missing desc"
+        L.append(f"| JSON losslessness | ✅ | {lossless.json_total} sessions{desc_part} |")
+
+    L.append("")
+
+    # Deep: per-activity scrape table
+    if deep and scrape.df_latest is not None and not scrape.df_latest.empty:
+        cols = ["activity_folder", "found", "header_total", "parsed", "match"]
+        use = [c for c in cols if c in scrape.df_latest.columns]
+        df = scrape.df_latest[use]
+        # Only show mismatches or all if --deep
+        mismatches_df = df[~df["match"].fillna(False)] if "match" in df.columns else pd.DataFrame()
+        if not mismatches_df.empty:
+            L += [
+                "<details><summary>❌ Scrape mismatches</summary>",
+                "",
+                "| Activity | header_total | parsed | match |",
+                "|----------|:------------:|:------:|:-----:|",
+            ]
+            for _, row in mismatches_df.iterrows():
+                L.append(
+                    f"| {row.get('activity_folder', '')} | "
+                    f"{row.get('header_total', '')} | "
+                    f"{row.get('parsed', '')} | "
+                    f"{'✅' if row.get('match') else '❌'} |"
+                )
+            L += ["</details>", ""]
+        else:
+            L += [
+                "<details><summary>Scrape counts (all activities)</summary>",
+                "",
+                "| Activity | header_total | parsed | match |",
+                "|----------|:------------:|:------:|:-----:|",
+            ]
+            for _, row in df.iterrows():
+                L.append(
+                    f"| {row.get('activity_folder', '')} | "
+                    f"{row.get('header_total', '')} | "
+                    f"{row.get('parsed', '')} | "
+                    f"{'✅' if row.get('match') else '❌'} |"
+                )
+            L += ["</details>", ""]
+
+    # Deep: per-program JSON/desc table
+    if deep and lossless is not None and lossless.json_dir_found and lossless.per_program:
+        L += [
+            "<details><summary>Description coverage per program</summary>",
+            "",
+            "| Program | JSON sessions | Desc missing | Miss% |",
+            "|---------|:-------------:|:------------:|:-----:|",
+        ]
+        for r in sorted(lossless.per_program, key=lambda x: x["program"]):
+            pct = (
+                f"{r['desc_missing'] / r['json_count'] * 100:.1f}%"
+                if r["json_count"] > 0
+                else "N/A"
+            )
+            flag = "⚠️ " if r["desc_missing"] > 0 else ""
+            L.append(
+                f"| {r['program']} | {r['json_count']} | {flag}{r['desc_missing']} | {pct} |"
+            )
+        L += ["</details>", ""]
+
+    with open(summary_path, "a") as f:
+        f.write("\n".join(L))
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Data prep health (scrape → clean → DB).")
     p.add_argument(
@@ -984,6 +1117,9 @@ def main(argv: list[str] | None = None) -> int:
     clean_bad = not integrity.dfcrs_exists
     db_bad = integrity.engine_ok and integrity.fail_count() > 0
     json_bad = lossless.json_dir_found and not lossless.ok
+
+    write_step_summary(scrape, integrity, lossless, deep=args.deep)
+
     return 1 if (scrape_bad or clean_bad or db_bad or json_bad) else 0
 
 

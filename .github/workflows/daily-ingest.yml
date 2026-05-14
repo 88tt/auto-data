@@ -674,6 +674,14 @@ jobs:
           print(f"\n{non_empty}/{len(sport_files)} files have data, {total_no_loc} sessions missing location")
           EOF
 
+      - name: Pipeline health check (script 5)
+        if: needs.insert.result == 'success' || needs.insert.result == 'skipped'
+        continue-on-error: true
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OUT_DIR: ${{ github.workspace }}/target/public/data
+        run: python 5_check_data.py --deep --no-write-csv
+
       - name: Upload exported JSON as artifact
         if: needs.insert.result == 'success' || needs.insert.result == 'skipped'
         uses: actions/upload-artifact@v4
