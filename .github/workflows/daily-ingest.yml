@@ -271,6 +271,7 @@ jobs:
 
       - name: Download combined dfcrs
         if: ${{ github.event.inputs.export_only != 'true' && (needs.insert.result == 'success' || needs.insert.result == 'skipped') }}
+        continue-on-error: true   # artifact absent when insert was skipped due to upstream failure
         uses: actions/download-artifact@v4
         with:
           name: dfcrs-combined
