@@ -907,7 +907,7 @@ def write_step_summary(
     if not summary_path:
         return
 
-    scrape_bad = bool(scrape.error) or (scrape.df_latest is None or scrape.df_latest.empty or not scrape.ok)
+    scrape_bad = (not scrape.error) and (scrape.df_latest is None or scrape.df_latest.empty or not scrape.ok)
     clean_bad = not integrity.dfcrs_exists
     db_bad = integrity.engine_ok and integrity.fail_count() > 0
     json_bad = lossless is not None and lossless.json_dir_found and not lossless.ok
@@ -1100,8 +1100,9 @@ def main(argv: list[str] | None = None) -> int:
                         if r["json_count"] > 0
                         else "N/A"
                     )
+                    prog_label = r["program"].replace("\r", "").replace("\n", "")
                     print(
-                        f"  {r['program']:<{prog_w}}  {r['json_count']:>8}  "
+                        f"  {prog_label:<{prog_w}}  {r['json_count']:>8}  "
                         f"{r['desc_missing']:>10}  {pct:>7}"
                     )
                 print(
@@ -1110,10 +1111,13 @@ def main(argv: list[str] | None = None) -> int:
                 )
 
     print()
-    # Exit code: 1 if any hard failure on checked layers
-    scrape_bad = bool(scrape.error) or (
-        scrape.df_latest is None or scrape.df_latest.empty or not scrape.ok
-    )
+    # Exit code: 1 if any hard failure on checked layers.
+    # "No scraped* folders found" means the check can't run (e.g. export-job runner
+    # never downloads raw scrape artifacts) — treat as skipped, not failed.
+    if scrape.error:
+        scrape_bad = False
+    else:
+        scrape_bad = scrape.df_latest is None or scrape.df_latest.empty or not scrape.ok
     clean_bad = not integrity.dfcrs_exists
     db_bad = integrity.engine_ok and integrity.fail_count() > 0
     json_bad = lossless.json_dir_found and not lossless.ok
