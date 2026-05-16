@@ -3,7 +3,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException, ElementClickInterceptedException, TimeoutException
+from selenium.common.exceptions import NoSuchElementException, ElementClickInterceptedException, TimeoutException, StaleElementReferenceException
 from bs4 import BeautifulSoup
 import json
 import re
@@ -157,7 +157,16 @@ def click_view_more_until_exhausted(driver) -> None:
         time.sleep(0.25)
 
         try:
-            view_more_button.click()
+            # Re-find immediately before clicking — the reference can go stale during scrollIntoView
+            view_more_button = driver.find_element(By.XPATH, VIEW_MORE_BUTTON_XPATH)
+            driver.execute_script("arguments[0].click();", view_more_button)
+        except StaleElementReferenceException:
+            # DOM updated between find and click — re-find and JS-click once more
+            try:
+                view_more_button = driver.find_element(By.XPATH, VIEW_MORE_BUTTON_XPATH)
+                driver.execute_script("arguments[0].click();", view_more_button)
+            except (NoSuchElementException, StaleElementReferenceException):
+                break
         except ElementClickInterceptedException:
             stalls += 1
             if stalls >= STALL_LIMIT:
