@@ -552,6 +552,10 @@ jobs:
                   pipeline_rows.append(
                       f"| DB → JSON | {_fmt(db_scoped_count)} → {_fmt(total_sessions)} | {_fmt(db_json_lost)} | {dj_flag} |"
                   )
+              coord_flag = "✅" if total_no_loc == 0 else "⚠️"
+              pipeline_rows.append(
+                  f"| Coordinates | {total_no_loc} missing | — | {coord_flag} |"
+              )
               pipeline_rows.append(
                   f"| Descriptions | {total_desc_missing} missing ({desc_pct}) | — | {desc_flag} |"
               )
@@ -564,7 +568,7 @@ jobs:
 
               # One-line output summary
               L += [
-                  f"**{_fmt(total_sessions)} sessions** exported across {non_empty} programs · {total_no_loc} without location",
+                  f"**{_fmt(total_sessions)} sessions** exported across {non_empty} programs",
                   "",
               ]
 
