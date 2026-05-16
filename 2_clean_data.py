@@ -94,6 +94,12 @@ dfcrs.loc[dfcrs['program']=='Swim', 'series'] = dfcrs.loc[dfcrs['program']=='Swi
 # # clean data: inconsisteny naming
 # dfcrs.loc[dfcrs['crs_name']== 'swim', 'crs_name']='ultra swim 3'
 
+# split combined "Stroke Improvement and Swim Fit" series into separate filterable series
+_combined = dfcrs['series'] == 'Stroke Improvement and Swim Fit'
+dfcrs.loc[_combined & dfcrs['Name'].str.contains('Stroke Improvement', case=False, regex=False), 'series'] = 'Stroke Improvement'
+dfcrs.loc[_combined & dfcrs['Name'].str.contains('Swim Fit', case=False, regex=False), 'series'] = 'Swim Fit'
+dfcrs.loc[_combined & dfcrs['Name'].str.contains('Challenge Swim', case=False, regex=False), 'series'] = 'Challenge Swim'
+
 # small group ultra swim and adult swim should be under their respective series
 target_group = (dfcrs['series']=='Small Group-Semi-Private Lessons') & dfcrs['Name'].str.contains('ultra swim', case=False, regex=True)
 dfcrs.loc[target_group, 'series'] = 'Ultra Swim 1-9'
