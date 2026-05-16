@@ -126,6 +126,7 @@ def main():
 
         print(f"City: {CITY}, site: {SITE_SLUG}, seasons: {season_ids}, output: {output_dir}")
         print(f"Activity filters: {filters_to_use}")
+        mismatches: list[tuple[str, str, int, int]] = []  # (activity, season_id, expected, got)
 
         for season_id in season_ids:
             season_url = (
@@ -173,7 +174,8 @@ def main():
                     if header_total_final == n:
                         print(f"    OK. {header_total_final} found for {activity_name}; {n} saved.")
                     else:
-                        print(f"    Warning. Header said {header_total_final}, parsed {n} for {activity_name}.")
+                        mismatches.append((activity_name, season_id, header_total_final, n))
+                        print(f"    MISMATCH. Header said {header_total_final}, parsed {n} for {activity_name} (season {season_id}).")
                     if header_total_initial != header_total_final:
                         print(
                             f"    Note. Header drifted during scrape for {activity_name}: "
@@ -254,6 +256,11 @@ def main():
                     continue
 
         print("\nDone.")
+        if mismatches:
+            print(f"\nSCRAPE COUNT MISMATCH — {len(mismatches)} activit(ies) did not parse all sessions:", file=sys.stderr)
+            for activity, sid, expected, got in mismatches:
+                print(f"  [{sid}] {activity}: expected {expected}, got {got} (missing {expected - got})", file=sys.stderr)
+            sys.exit(1)
     finally:
         driver.quit()
 

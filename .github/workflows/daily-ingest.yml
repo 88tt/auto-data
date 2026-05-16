@@ -68,6 +68,7 @@ jobs:
         run: python 1_scrape_w_selenium.py
 
       - name: Upload raw data (${{ matrix.group }})
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: raw-data-${{ matrix.group }}
