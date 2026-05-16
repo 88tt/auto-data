@@ -109,8 +109,15 @@ target_group = (dfcrs['series']=='Small Group-Semi-Private Lessons') & (dfcrs['N
 dfcrs.loc[target_group, 'series'] = 'Adult and Older Adult Swim 1-3'
 dfcrs.loc[target_group, 'crs_name'] = dfcrs.loc[target_group, 'Name'].apply(lambda x: x.split('-')[0].strip())
 
+target_group = (dfcrs['series']=='Small Group-Semi-Private Lessons') & dfcrs['Name'].str.contains('stroke improvement', case=False, regex=True)
+dfcrs.loc[target_group, 'series'] = 'Stroke Improvement'
+
 # private
 dfcrs.loc[dfcrs['series']=='Small Group-Semi-Private Lessons', 'series'] = 'Private Swim Lessons'
+
+# stroke improvement - small group scraped directly under Private Swim Lessons should be under Stroke Improvement
+target_group = (dfcrs['series']=='Private Swim Lessons') & dfcrs['Name'].str.contains('stroke improvement', case=False, regex=True)
+dfcrs.loc[target_group, 'series'] = 'Stroke Improvement'
 
 # code for checking
 '''
