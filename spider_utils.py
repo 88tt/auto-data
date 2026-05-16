@@ -400,20 +400,31 @@ def get_activities_for_season(driver, season_url):
     return [s.text.strip() for s in spans if s.text.strip()]
 
 
-def choose_activity_by_filter_checkbox(driver, activity_name, season_url):
+def choose_activity_by_filter_checkbox(driver, activity_name, season_url, *, _max_retries: int = 3):
     """
     Select a single activity via the Activities filter checkbox panel.
     Navigates back to season_url first to reset state, then opens the Activities
     filter, checks the matching checkbox, and clicks Apply.
     Returns the header total count string (same as choose_activity).
+    Retries up to _max_retries times on filter-panel timeout (transient after heavy scrapes).
     """
-    driver.get(season_url)
-    WebDriverWait(driver, WAIT_TIMEOUT).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, ".activity-results-header__total, [class*='search-group']"))
-    )
-    time.sleep(1)
-
-    _open_activities_filter_panel(driver)
+    last_exc: Exception | None = None
+    for attempt in range(1, _max_retries + 1):
+        try:
+            driver.get(season_url)
+            WebDriverWait(driver, WAIT_TIMEOUT).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".activity-results-header__total, [class*='search-group']"))
+            )
+            time.sleep(1)
+            _open_activities_filter_panel(driver)
+            break  # panel opened successfully
+        except TimeoutException as exc:
+            last_exc = exc
+            if attempt < _max_retries:
+                print(f"    Filter panel timeout for {activity_name} (attempt {attempt}/{_max_retries}), retrying in 5s…")
+                time.sleep(5)
+            else:
+                raise last_exc
 
     safe_name = _xpath_escape(activity_name)
     try:
