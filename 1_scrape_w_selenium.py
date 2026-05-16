@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sys
+import time
 import traceback
 from datetime import datetime
 
@@ -55,6 +56,8 @@ _season_ids_env = os.environ.get("SEASON_IDS", "").strip()
 SEASON_IDS_OVERRIDE = [s.strip() for s in _season_ids_env.split(",") if s.strip()]
 
 ENCODING = "utf-8"
+MAX_SCRAPE_RETRIES = 3          # per-activity retries when parsed count < header count
+SCRAPE_RETRY_WAIT = 8           # seconds to wait between retries
 
 
 def _activity_folder_name(activity_name: str) -> str:
@@ -155,28 +158,63 @@ def main():
                 os.makedirs(folder, exist_ok=True)
 
                 try:
-                    header_total_initial = su.choose_activity_by_filter_checkbox(
-                        driver, activity_name, season_url
-                    )
-                    if header_total_initial is None:
-                        print(f"    [{season_id}] {activity_name}: not in panel, skipping.")
-                        if not os.listdir(folder):
-                            os.rmdir(folder)
+                    best_df: pd.DataFrame | None = None
+                    best_dfdesc: pd.DataFrame | None = None
+                    best_n = 0
+                    header_total_final = 0
+                    header_total_initial: int | None = None
+                    activity_in_panel = True
+
+                    for attempt in range(1, MAX_SCRAPE_RETRIES + 1):
+                        raw_initial = su.choose_activity_by_filter_checkbox(
+                            driver, activity_name, season_url
+                        )
+                        if raw_initial is None:
+                            print(f"    [{season_id}] {activity_name}: not in panel, skipping.")
+                            if not os.listdir(folder):
+                                os.rmdir(folder)
+                            activity_in_panel = False
+                            break
+
+                        if attempt == 1:
+                            header_total_initial = _parse_total_courses(raw_initial)
+
+                        su.click_view_more_until_exhausted(driver)
+                        df_attempt = su.get_course_info(driver)
+                        dfdesc_attempt = su.get_course_description(driver, df_attempt)
+                        header_total_final = _header_total_from_page_source(driver.page_source)
+                        n_attempt = df_attempt.shape[0]
+
+                        if n_attempt > best_n:
+                            best_n = n_attempt
+                            best_df = df_attempt
+                            best_dfdesc = dfdesc_attempt
+
+                        if header_total_final == n_attempt:
+                            print(f"    OK. {header_total_final} found for {activity_name}; {n_attempt} saved.")
+                            break
+                        elif attempt < MAX_SCRAPE_RETRIES:
+                            print(
+                                f"    MISMATCH attempt {attempt}/{MAX_SCRAPE_RETRIES}. "
+                                f"Header said {header_total_final}, parsed {n_attempt} for {activity_name}. "
+                                f"Retrying in {SCRAPE_RETRY_WAIT}s…"
+                            )
+                            time.sleep(SCRAPE_RETRY_WAIT)
+                        else:
+                            mismatches.append((activity_name, season_id, header_total_final, best_n))
+                            print(
+                                f"    MISMATCH. Header said {header_total_final}, parsed {best_n} for "
+                                f"{activity_name} (season {season_id}) after {MAX_SCRAPE_RETRIES} attempts."
+                            )
+
+                    if not activity_in_panel:
                         continue
-                    header_total_initial = _parse_total_courses(header_total_initial)
 
-                    su.click_view_more_until_exhausted(driver)
-                    df = su.get_course_info(driver)  # Parse after all cards are loaded
-                    dfdesc = su.get_course_description(driver, df)  # Scrape descriptions for all courses
-                    header_total_final = _header_total_from_page_source(driver.page_source)
+                    df = best_df
+                    dfdesc = best_dfdesc
+                    n = best_n
 
-                    n = df.shape[0]
-                    if header_total_final == n:
-                        print(f"    OK. {header_total_final} found for {activity_name}; {n} saved.")
-                    else:
-                        mismatches.append((activity_name, season_id, header_total_final, n))
-                        print(f"    MISMATCH. Header said {header_total_final}, parsed {n} for {activity_name} (season {season_id}).")
-                    if header_total_initial != header_total_final:
+                    if header_total_initial is not None and header_total_initial != header_total_final:
                         print(
                             f"    Note. Header drifted during scrape for {activity_name}: "
                             f"{header_total_initial} -> {header_total_final}."
