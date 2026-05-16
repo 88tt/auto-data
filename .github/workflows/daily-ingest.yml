@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event.inputs.export_only != 'true' }}
     strategy:
-      fail-fast: false  # let other groups continue if one fails
+      fail-fast: true  # cancel other groups immediately if any group fails
       matrix:
         include:
           - group: group-a
@@ -706,7 +706,7 @@ jobs:
           path: target/public/data/
 
       - name: Commit and push to target
-        if: (needs.insert.result == 'success' || needs.insert.result == 'skipped') && github.event.inputs.dry_run != 'true'
+        if: (needs.insert.result == 'success' || needs.insert.result == 'skipped') && (needs.scrape.result == 'success' || needs.scrape.result == 'skipped') && github.event.inputs.dry_run != 'true'
         working-directory: target
         run: |
           git config user.name "github-actions[bot]"
