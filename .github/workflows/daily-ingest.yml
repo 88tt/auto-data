@@ -128,6 +128,21 @@ jobs:
         run: python 2_clean_data.py
         # No ACTIVITIES set — defaults to all activities, writes combined dfcrs.csv
 
+      - name: Geocoding audit (new centres only)
+        continue-on-error: true
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_MAP_API_KEY: ${{ secrets.GOOGLE_MAP_API_KEY }}
+        run: python audit_geocoding.py --prefix ${{ env.YEAR_AND_SEASON }} --new-only --out audit_geocoding_results.csv
+
+      - name: Upload geocoding audit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: geocoding-audit-${{ github.run_id }}
+          path: audit_geocoding_results.csv
+          if-no-files-found: ignore
+
       - name: Check dfcrs → DB losslessness
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
