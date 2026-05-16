@@ -141,7 +141,6 @@ jobs:
           STARTDATE_CUTOFF  = os.environ.get("STARTDATE_CUTOFF", "2026-03-01")
           pk_prefix         = f"{YEAR_AND_SEASON}_%_"
           cutoff            = pd.Timestamp(STARTDATE_CUTOFF)
-          summary_path      = os.environ.get("GITHUB_STEP_SUMMARY", "")
 
           # ── 1. Find the latest dfcrs.csv ──────────────────────────────────────
           csv_files = glob.glob("raw_data/**/dfcrs.csv", recursive=True)
@@ -226,32 +225,6 @@ jobs:
           if db_error:
               print("Skipping losslessness diff — DB unavailable")
               sys.exit(0)
-
-          # ── 6. Append to GITHUB_STEP_SUMMARY ─────────────────────────────────
-          if summary_path:
-              flag = "✅" if ok else "❌"
-              lines = [
-                  "",
-                  "## dfcrs → DB Losslessness",
-                  "",
-                  "| Metric | Count |",
-                  "|--------|------:|",
-                  f"| CSV barcodes in scope | {len(csv_barcodes)} |",
-                  f"| DB barcodes in scope  | {len(db_barcodes)} |",
-                  f"| Only in CSV (lost)    | {len(only_csv)} {flag} |",
-                  f"| Only in DB (extra)    | {len(only_db)} |",
-                  "",
-              ]
-              if only_csv:
-                  lines += [
-                      "<details><summary>Sample barcodes lost (up to 15)</summary>",
-                      "",
-                  ]
-                  for b in only_csv[:15]:
-                      lines.append(f"- `{b}`")
-                  lines += ["</details>", ""]
-              with open(summary_path, "a") as f:
-                  f.write("\n".join(lines))
 
           # ── 7. Exit non-zero if any CSV barcodes are missing from DB ──────────
           if only_csv:
@@ -538,11 +511,26 @@ jobs:
           if summary_path:
               overall  = "✅ Passed" if not errors else "❌ Failed"
               run_link = f"[{run_id}]({run_url})" if run_url else run_id
+              _fmt     = lambda n: f"{n:,}" if isinstance(n, int) else "N/A"
+              desc_pct = f"{total_desc_missing / total_sessions * 100:.1f}%" if total_sessions > 0 else "N/A"
+              desc_flag = "✅" if total_desc_missing == 0 else ("❌" if total_sessions > 0 and total_desc_missing / total_sessions > DESC_MISSING_THRESHOLD else "⚠️")
+
               L = [
                   f"# Daily Ingest — {overall}",
                   f"**Season:** `{season}` | **Run:** {run_link} | **Time:** {now_str}",
                   "",
-                  "## Job Status",
+              ]
+
+              # Errors first — most important when the run is failing
+              if errors:
+                  L += ["## ❌ Errors", ""]
+                  for e in errors:
+                      L.append(f"- {e}")
+                  L.append("")
+
+              # Job status
+              L += [
+                  "## Status",
                   "",
                   "| Job | Result |",
                   "|-----|--------|",
@@ -552,17 +540,55 @@ jobs:
                   "",
               ]
 
+              # Pipeline health — compact table
+              pipeline_rows = []
+              if _li is not None:
+                  li_flag = "✅" if _li.get("ok") else "❌"
+                  pipeline_rows.append(
+                      f"| dfcrs → DB | {_fmt(_li['csv'])} → {_fmt(_li['db'])} | {_li['csv_only']} | {li_flag} |"
+                  )
+              if db_json_ok is not None:
+                  dj_flag = "✅" if db_json_ok else "❌"
+                  pipeline_rows.append(
+                      f"| DB → JSON | {_fmt(db_scoped_count)} → {_fmt(total_sessions)} | {_fmt(db_json_lost)} | {dj_flag} |"
+                  )
+              pipeline_rows.append(
+                  f"| Descriptions | {total_desc_missing} missing ({desc_pct}) | — | {desc_flag} |"
+              )
+              L += [
+                  "## Pipeline",
+                  "",
+                  "| Stage | Count | Lost | Status |",
+                  "|-------|-------|-----:|:------:|",
+              ] + pipeline_rows + [""]
+
+              # One-line output summary
+              L += [
+                  f"**{_fmt(total_sessions)} sessions** exported across {non_empty} programs · {total_no_loc} without location",
+                  "",
+              ]
+
+              # Per-program breakdown (collapsed)
+              if export_rows:
+                  L += [
+                      f"<details><summary>Per-program ({len(export_rows)} programs)</summary>",
+                      "",
+                      "| Program | Sessions | No Location |",
+                      "|---------|:--------:|:-----------:|",
+                  ]
+                  for sport, count, no_loc in export_rows:
+                      flag = " ⚠️" if no_loc > 0 else ""
+                      L.append(f"| {sport} | {count} | {no_loc}{flag} |")
+                  L += [f"| **Total** | **{_fmt(total_sessions)}** | **{total_no_loc}** |", "", "</details>", ""]
+
+              # Insert detail (collapsed)
               if insert_summary:
-                  total_found   = sum(r["found"]           for r in insert_summary)
-                  total_saved   = sum(r["saved"]           for r in insert_summary)
-                  total_dropped = sum(r.get("dropped", 0)  for r in insert_summary)
+                  total_found   = sum(r["found"]          for r in insert_summary)
+                  total_saved   = sum(r["saved"]          for r in insert_summary)
+                  total_dropped = sum(r.get("dropped", 0) for r in insert_summary)
                   drop_flag = " ⚠️" if total_dropped > 0 else ""
                   L += [
-                      "## Insert: Found vs Saved",
-                      "",
-                      f"**Total:** {total_found} found → {total_saved} saved{drop_flag}",
-                      "",
-                      "<details><summary>Per-series breakdown</summary>",
+                      f"<details><summary>Insert detail — {_fmt(total_found)} found → {_fmt(total_saved)} saved{drop_flag}</summary>",
                       "",
                       "| Program | Series | Found | Saved | Dropped |",
                       "|---------|--------|------:|------:|--------:|",
@@ -573,14 +599,15 @@ jobs:
                       L.append(f"| {r['program']} | {r['series']} | {r['found']} | {r['saved']} | {dropped}{warn} |")
                   L += ["</details>", ""]
               else:
-                  L += ["## Insert: Found vs Saved", "", "_Not available (export-only or insert skipped)_", ""]
+                  L += ["<details><summary>Insert detail</summary>", "", "_Not available (export-only or insert skipped)_", "", "</details>", ""]
 
+              # Sessions without location in scrape (collapsed)
               if no_location_in_scrape:
                   _by_prog = defaultdict(list)
                   for r in no_location_in_scrape:
                       _by_prog[(r["program"], r["series"])].append(r["session_number"])
                   L += [
-                      f"## ⚠️ No Location in Scraped Data ({len(no_location_in_scrape)} sessions dropped before DB insert)",
+                      f"<details><summary>⚠️ {len(no_location_in_scrape)} sessions dropped — no location in scrape</summary>",
                       "",
                       "| Program | Series | # | Session Numbers |",
                       "|---------|--------|--:|-----------------|",
@@ -590,88 +617,48 @@ jobs:
                       if len(nums) > 15:
                           nums_str += f" … +{len(nums) - 15} more"
                       L.append(f"| {prog} | {series} | {len(nums)} | {nums_str} |")
-                  L.append("")
+                  L += ["</details>", ""]
 
-              if geocode_failures:
-                  L += [
-                      f"## ⚠️ Geocoding Failures ({len(geocode_failures)} centres)",
-                      "",
-                      "_These centres had no address returned by Google Maps. Their sessions are in the DB but will export without location._",
-                      "",
-                  ]
-                  for c in geocode_failures:
-                      L.append(f"- `{c}`")
-                  L.append("")
-
-              L += [
-                  "## Export Results",
-                  "",
-                  "| Sport | Sessions | No Location |",
-                  "|-------|:--------:|:-----------:|",
-              ]
-              for sport, count, no_loc in export_rows:
-                  flag = " ⚠️" if no_loc > 0 else ""
-                  L.append(f"| {sport} | {count} | {no_loc}{flag} |")
-              L += [f"| **Total** | **{total_sessions}** | **{total_no_loc}** |", ""]
-
+              # Sessions without coordinates in export (collapsed)
               if no_loc_by_centre:
                   L += [
-                      f"## ⚠️ Sessions Without Location ({total_no_loc} sessions)",
+                      f"<details><summary>⚠️ {total_no_loc} sessions without coordinates in export</summary>",
                       "",
-                      "| Sport | Centre | # | Session Numbers |",
-                      "|-------|--------|--:|-----------------|",
+                      "| Program | Centre | # | Session Numbers |",
+                      "|---------|--------|--:|-----------------|",
                   ]
                   for (sport, centre), sess_nums in sorted(no_loc_by_centre.items()):
                       nums_str = ", ".join(f"`{n}`" for n in sess_nums[:15])
                       if len(sess_nums) > 15:
                           nums_str += f" … +{len(sess_nums) - 15} more"
                       L.append(f"| {sport} | {centre} | {len(sess_nums)} | {nums_str} |")
-                  L.append("")
+                  L += ["</details>", ""]
 
-              # ── Pipeline Losslessness section ─────────────────────────────────
-              _dfcrs_db_flag = ("✅" if (_li and _li.get("ok")) else "❌") if _li else "⏭️"
-              _dfcrs_db_lost = str(_li["csv_only"]) if _li else "N/A (no artifact)"
-              if db_json_ok is None:
-                  _db_json_flag = "⏭️"
-                  _db_json_lost_str = "N/A"
-              else:
-                  _db_json_flag = "✅" if db_json_ok else "❌"
-                  _db_json_lost_str = str(db_json_lost) if db_json_lost is not None else "N/A"
-              if total_sessions > 0:
-                  _desc_pct = f"{total_desc_missing / total_sessions * 100:.1f}%"
-              else:
-                  _desc_pct = "N/A"
-              _desc_flag = "✅" if total_desc_missing == 0 else "⚠️"
-              L += [
-                  "## Pipeline Losslessness",
-                  "",
-                  "| Stage | Lost | Status |",
-                  "|-------|-----:|:------:|",
-                  f"| dfcrs → DB | {_dfcrs_db_lost} | {_dfcrs_db_flag} |",
-                  f"| DB → JSON | {_db_json_lost_str} | {_db_json_flag} |",
-                  f"| Description coverage (missing) | {total_desc_missing} ({_desc_pct}) | {_desc_flag} |",
-                  "",
-              ]
+              # Geocoding failures (collapsed)
+              if geocode_failures:
+                  L += [
+                      f"<details><summary>⚠️ {len(geocode_failures)} geocoding failures</summary>",
+                      "",
+                      "_Sessions are in the DB but export without coordinates._",
+                      "",
+                  ]
+                  for c in geocode_failures:
+                      L.append(f"- `{c}`")
+                  L += ["</details>", ""]
 
-              # ── Description Coverage detail section ────────────────────────────
+              # Description gaps (collapsed)
               if total_desc_missing > 0:
                   L += [
-                      "## ⚠️ Description Coverage",
+                      f"<details><summary>⚠️ Description gaps — {total_desc_missing} sessions ({desc_pct} missing)</summary>",
                       "",
-                      "| Program | Missing Desc | Total | % |",
-                      "|---------|-------------:|------:|--:|",
+                      "| Program | Missing | Total | % |",
+                      "|---------|--------:|------:|--:|",
                   ]
                   for prog, (missing, total_p) in sorted(desc_missing_by_program.items()):
                       if missing > 0:
                           pct_p = f"{missing / total_p * 100:.1f}%" if total_p > 0 else "N/A"
                           L.append(f"| {prog} | {missing} | {total_p} | {pct_p} |")
-                  L.append("")
-
-              if errors:
-                  L += ["## ❌ Validation Errors", ""]
-                  for e in errors:
-                      L.append(f"- {e}")
-                  L.append("")
+                  L += ["</details>", ""]
 
               with open(summary_path, "w") as f:
                   f.write("\n".join(L))
