@@ -60,6 +60,22 @@ CREATE TABLE IF NOT EXISTS activities_sessions (
     updated_at    TIMESTAMPTZ
 );
 
+-- Time-series log of availability status per session per scrape run.
+-- One row inserted per session per pipeline execution; never updated.
+CREATE TABLE IF NOT EXISTS session_availability_log (
+    id             BIGSERIAL PRIMARY KEY,
+    barcode        TEXT NOT NULL REFERENCES activities_sessions(barcode),
+    scraped_at     TIMESTAMPTZ NOT NULL,
+    availability   VARCHAR(16) NOT NULL CHECK (availability IN ('full', 'open', 'unknown')),
+    has_enroll_now BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_sal_barcode_scraped
+    ON session_availability_log (barcode, scraped_at);
+
+CREATE INDEX IF NOT EXISTS idx_sal_scraped_at
+    ON session_availability_log (scraped_at);
+
 CREATE TABLE IF NOT EXISTS activities_businesses (
     business      TEXT PRIMARY KEY,
     url           TEXT,

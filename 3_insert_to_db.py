@@ -487,6 +487,30 @@ with engine.begin() as conn:
     )
 print(f"Stamped last_seen_at for {len(seen_barcodes)} seen sessions.")
 
+# Append one availability snapshot row per session to the time-series log.
+_avail_log = dfsess_clean[["barcode", "availability", "has_enroll_now"]].copy()
+_avail_log["scraped_at"] = _sess_ts
+with engine.begin() as conn:
+    conn.execute(text(
+        "CREATE TABLE IF NOT EXISTS session_availability_log ("
+        "    id             BIGSERIAL PRIMARY KEY,"
+        "    barcode        TEXT NOT NULL REFERENCES activities_sessions(barcode),"
+        "    scraped_at     TIMESTAMPTZ NOT NULL,"
+        "    availability   VARCHAR(16) NOT NULL CHECK (availability IN ('full', 'open', 'unknown')),"
+        "    has_enroll_now BOOLEAN NOT NULL DEFAULT FALSE"
+        ")"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS idx_sal_barcode_scraped "
+        "ON session_availability_log (barcode, scraped_at)"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS idx_sal_scraped_at "
+        "ON session_availability_log (scraped_at)"
+    ))
+    _avail_log.to_sql("session_availability_log", con=conn, if_exists="append", index=False)
+print(f"Logged availability snapshot for {len(_avail_log)} sessions.")
+
 
 ############################################################################################################
 # insert into 'series' in db
