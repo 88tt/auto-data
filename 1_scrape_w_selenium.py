@@ -124,8 +124,8 @@ def main():
                 else:
                     print(f"  Warning: no season found matching {name!r} — skipping")
             if not season_ids:
-                print("No seasons resolved. Check SEASON_NAMES matches labels in the WHEN panel.")
-                return
+                print("No seasons resolved. Check SEASON_NAMES matches labels in the WHEN panel.", file=sys.stderr)
+                sys.exit(1)
 
         print(f"City: {CITY}, site: {SITE_SLUG}, seasons: {season_ids}, output: {output_dir}")
         print(f"Activity filters: {filters_to_use}")
@@ -298,6 +298,14 @@ def main():
             print(f"\nSCRAPE COUNT MISMATCH — {len(mismatches)} activit(ies) did not parse all sessions:", file=sys.stderr)
             for activity, sid, expected, got in mismatches:
                 print(f"  [{sid}] {activity}: expected {expected}, got {got} (missing {expected - got})", file=sys.stderr)
+            sys.exit(1)
+
+        csv_count = sum(
+            1 for name in os.listdir(output_dir)
+            if os.path.isfile(os.path.join(output_dir, name, "courses.csv"))
+        )
+        if csv_count == 0:
+            print(f"\nSCRAPE FAILED: 0 activities produced courses.csv in {output_dir}. Check errors above.", file=sys.stderr)
             sys.exit(1)
     finally:
         driver.quit()
