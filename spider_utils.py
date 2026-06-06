@@ -699,8 +699,27 @@ def get_course_description(driver, df):
                 By.XPATH,
                 f'//div[@class="activity-card-info__name-link"]//a[span[normalize-space(text())="{safe_stripped}"]]'
             )
+        # Locate the info tooltip button — try the known sibling selectors in order.
+        # Fall back to empty description if the site's HTML structure has changed.
+        info_button = None
         parent = crs_link.find_element(By.XPATH, "./..")
-        info_button = parent.find_element(By.XPATH, "./following-sibling::span")
+        for _selector in [
+            "./following-sibling::span",
+            "./following-sibling::button",
+            "..//button[contains(@class,'info')]",
+            "..//button[@aria-label]",
+        ]:
+            try:
+                info_button = parent.find_element(By.XPATH, _selector)
+                break
+            except NoSuchElementException:
+                continue
+
+        if info_button is None:
+            print(f"    Info button not found for '{course_name}' — skipping description.")
+            course_desc.append({'Name': course_name, 'Description': ""})
+            continue
+
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", info_button)
         info_button.click()
 
