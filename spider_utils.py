@@ -699,18 +699,21 @@ def get_course_description(driver, df):
                 By.XPATH,
                 f'//div[@class="activity-card-info__name-link"]//a[span[normalize-space(text())="{safe_stripped}"]]'
             )
-        # Locate the info tooltip button — try the known sibling selectors in order.
-        # Fall back to empty description if the site's HTML structure has changed.
-        info_button = None
+        # Locate the info tooltip button.
+        # New structure (2026-06): span.readable-message__trigger is a sibling of the <a>
+        # inside div.activity-card-info__name-link, so search from crs_link first.
+        # Old structure: span was a sibling of the parent div — kept as fallback.
         parent = crs_link.find_element(By.XPATH, "./..")
-        for _selector in [
-            "./following-sibling::span",
-            "./following-sibling::button",
-            "..//button[contains(@class,'info')]",
-            "..//button[@aria-label]",
+        info_button = None
+        for context, _selector in [
+            (crs_link, "./following-sibling::span[contains(@class,'readable-message__trigger')]"),
+            (crs_link, "./following-sibling::span"),
+            (parent, ".//span[contains(@class,'readable-message__trigger')]"),
+            (parent, "./following-sibling::span"),
+            (parent, "./following-sibling::button"),
         ]:
             try:
-                info_button = parent.find_element(By.XPATH, _selector)
+                info_button = context.find_element(By.XPATH, _selector)
                 break
             except NoSuchElementException:
                 continue
