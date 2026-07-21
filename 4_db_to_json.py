@@ -125,7 +125,7 @@ SPORTS = [
     s.strip()
     for s in os.environ.get(
         "SPORTS",
-        "Adapted Activities,Arts,CampTO,Early Years & After School,FitnessTO,Leadership,Hobbies,Skate & Ski,Sports,Swim",
+        "Adapted Activities,Arts,CampTO,Early Years & After School,FitnessTO,Leadership,Hobbies,Music,Skate & Ski,Sports,Swim",
     ).split(",")
     if s.strip()
 ]
@@ -247,8 +247,42 @@ def _build_latest_allowed_barcodes(engine=None) -> set[str] | None:
         return None
 
 
+def _program_regex_and_music_filter(keyword: str) -> tuple[str, bool | None]:
+    """DB program-prefix regex fragment for `keyword`, plus how to split Music
+    rows out of/into legacy Arts-tagged ones by their embedded series text.
+
+    Music is recategorized out of Arts in 2_clean_data.py's categorize_music
+    (program='Music' instead of 'Arts'), but that split only takes effect for
+    rows a future 3_insert_to_db.py run actually re-inserts -- today's DB still
+    has every Music course tagged program='Arts', with "music: <bucket>"
+    (categorize_music's own bucket labels, e.g. "music: piano") embedded in
+    that row's series identifier either way, since categorize_music sets
+    `series` independently of `program`. Querying "(Arts|Music)" as the
+    program-prefix regex (alternation) matches both an unrefreshed DB (today)
+    and a freshly re-run one in a single query -- no DB write required -- and
+    the include/exclude filter this returns then keeps only the right rows
+    from that combined result, using the SAME "music:" substring signal in
+    both cases.
+
+    Returns (program_regex_fragment, want_music): want_music is True to keep
+    only "music:"-containing rows, False to exclude them, None for every
+    other keyword (no filtering applied).
+    """
+    if keyword in ("Music", "Arts"):
+        return "(Arts|Music)", keyword == "Music"
+    return re.escape(keyword), None
+
+
+def _apply_music_filter(df: pd.DataFrame, column: str, want_music: bool | None) -> pd.DataFrame:
+    if want_music is None:
+        return df
+    is_music = df[column].str.contains("music:", case=False, na=False)
+    return df[is_music] if want_music else df[~is_music]
+
+
 def export_series(engine, keyword, year_and_season, *, allowed_series_ids: set[str] | None = None):
-    name_pattern = f"^{re.escape(keyword)}{re.escape(year_and_season)}_%_"
+    program_re, want_music = _program_regex_and_music_filter(keyword)
+    name_pattern = f"^{program_re}{re.escape(year_and_season)}_%_"
     q = text(
         """
         SELECT name, min_age, max_age, description, session_count, created_at
@@ -258,13 +292,15 @@ def export_series(engine, keyword, year_and_season, *, allowed_series_ids: set[s
         """
     )
     df = pd.read_sql(q, engine, params={"pat": name_pattern})
+    df = _apply_music_filter(df, "name", want_music)
     if allowed_series_ids is not None:
         df = df[df["name"].isin(allowed_series_ids)]
     return df.to_dict(orient="records")
 
 
 def export_coursenames(engine, keyword, year_and_season, *, allowed_coursename_ids: set[str] | None = None):
-    pat = f"^{re.escape(keyword)}.*{re.escape(year_and_season)}_%_.*"
+    program_re, want_music = _program_regex_and_music_filter(keyword)
+    pat = f"^{program_re}.*{re.escape(year_and_season)}_%_.*"
     q = text(
         """
         SELECT name, series_id AS series, crs_name_desc, num_sessions, min_age, max_age
@@ -273,13 +309,18 @@ def export_coursenames(engine, keyword, year_and_season, *, allowed_coursename_i
         """
     )
     df = pd.read_sql(q, engine, params={"pat": pat})
+    df = _apply_music_filter(df, "name", want_music)
     if allowed_coursename_ids is not None:
         df = df[df["name"].isin(allowed_coursename_ids)]
     return df.to_dict(orient="records")
 
 
 def export_sessions_with_courses(engine, keyword, year_and_season, *, allowed_barcodes: set[str] | None = None):
-    barcode_pat = f"^{re.escape(keyword)}{re.escape(year_and_season)}_%_.*"
+    # barcode alone doesn't embed series (see 3_insert_to_db.py:
+    # barcode = program + pk_prefix + Course Number) -- the music/Arts split
+    # below runs on crs_fam (= c.series_id, which DOES embed series) instead.
+    program_re, want_music = _program_regex_and_music_filter(keyword)
+    barcode_pat = f"^{program_re}{re.escape(year_and_season)}_%_.*"
     q = text(
         """
         SELECT
@@ -310,6 +351,7 @@ def export_sessions_with_courses(engine, keyword, year_and_season, *, allowed_ba
         """
     )
     df = pd.read_sql(q, engine, params={"pat": barcode_pat})
+    df = _apply_music_filter(df, "crs_fam", want_music)
     if allowed_barcodes is not None:
         df = df[df["barcode"].isin(allowed_barcodes)]
 
