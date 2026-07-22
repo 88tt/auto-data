@@ -125,7 +125,7 @@ SPORTS = [
     s.strip()
     for s in os.environ.get(
         "SPORTS",
-        "Adapted Activities,Arts,CampTO,Early Years & After School,FitnessTO,Leadership,Hobbies,Music,Skate & Ski,Sports,Swim",
+        "Adapted Activities,Arts,CampTO,Early Years & After School,FitnessTO,Leadership,Hobbies,Martial Arts,Music,Skate & Ski,Sports,Swim",
     ).split(",")
     if s.strip()
 ]
@@ -247,41 +247,66 @@ def _build_latest_allowed_barcodes(engine=None) -> set[str] | None:
         return None
 
 
-def _program_regex_and_music_filter(keyword: str) -> tuple[str, bool | None]:
-    """DB program-prefix regex fragment for `keyword`, plus how to split Music
-    rows out of/into legacy Arts-tagged ones by their embedded series text.
+# Programs the DB never tags with their own `program` value -- every row
+# still comes in tagged under a broader parent program from
+# 3_insert_to_db.py -- but that should still get their own exported JSON
+# file/homepage tile. Keyed by the child's own program name, mapping to
+# (parent program, a case-insensitive substring that appears ONLY in that
+# child's own rows' series/crs_fam identifier text, never in a genuine
+# parent-only row's).
+#
+# Music: 2_clean_data.py's categorize_music sets `series` independently of
+# `program` to "music: <bucket>" (e.g. "music: piano") for every genuine
+# Music row, while leaving `program` as 'Arts' -- so "music:" is the signal.
+# A future 3_insert_to_db.py run could start tagging these rows
+# program='Music' directly; nothing here depends on that happening.
+#
+# Martial Arts: no categorize_* step needed -- the City's own source data
+# already tags these rows' series as "Martial Arts" verbatim (categorize
+# courses: Sports only strips the "Sports -" prefix, it doesn't rename the
+# series), so "martial arts" is the signal.
+PROGRAM_SPLITS = {
+    "Music": ("Arts", "music:"),
+    "Martial Arts": ("Sports", "martial arts"),
+}
 
-    Music is recategorized out of Arts in 2_clean_data.py's categorize_music
-    (program='Music' instead of 'Arts'), but that split only takes effect for
-    rows a future 3_insert_to_db.py run actually re-inserts -- today's DB still
-    has every Music course tagged program='Arts', with "music: <bucket>"
-    (categorize_music's own bucket labels, e.g. "music: piano") embedded in
-    that row's series identifier either way, since categorize_music sets
-    `series` independently of `program`. Querying "(Arts|Music)" as the
-    program-prefix regex (alternation) matches both an unrefreshed DB (today)
-    and a freshly re-run one in a single query -- no DB write required -- and
-    the include/exclude filter this returns then keeps only the right rows
-    from that combined result, using the SAME "music:" substring signal in
-    both cases.
 
-    Returns (program_regex_fragment, want_music): want_music is True to keep
-    only "music:"-containing rows, False to exclude them, None for every
-    other keyword (no filtering applied).
+def _program_regex_and_split_signal(keyword: str) -> tuple[str, str | None, bool | None]:
+    """DB program-prefix regex fragment for `keyword`, the split signal
+    substring to filter on (if any), and whether to keep (True) or exclude
+    (False) rows containing it -- see PROGRAM_SPLITS.
+
+    Querying "(parent|child)" as the program-prefix regex (alternation)
+    matches both a DB where every row is still tagged with the parent, and
+    one where some rows have already been re-tagged with the child, in a
+    single query -- no DB write required -- and the include/exclude filter
+    this returns then keeps only the right rows from that combined result
+    either way.
+
+    Returns (program_regex_fragment, signal, want_child): want_child is True
+    to keep only signal-containing rows (when `keyword` IS the child), False
+    to exclude them (when `keyword` is the parent, so its own export doesn't
+    double-count the child's rows), None for every other keyword (no
+    filtering applied).
     """
-    if keyword in ("Music", "Arts"):
-        return "(Arts|Music)", keyword == "Music"
-    return re.escape(keyword), None
+    if keyword in PROGRAM_SPLITS:
+        parent, signal = PROGRAM_SPLITS[keyword]
+        return f"({parent}|{keyword})", signal, True
+    for child, (parent, signal) in PROGRAM_SPLITS.items():
+        if keyword == parent:
+            return f"({parent}|{child})", signal, False
+    return re.escape(keyword), None, None
 
 
-def _apply_music_filter(df: pd.DataFrame, column: str, want_music: bool | None) -> pd.DataFrame:
-    if want_music is None:
+def _apply_split_filter(df: pd.DataFrame, column: str, signal: str | None, want_child: bool | None) -> pd.DataFrame:
+    if want_child is None:
         return df
-    is_music = df[column].str.contains("music:", case=False, na=False)
-    return df[is_music] if want_music else df[~is_music]
+    has_signal = df[column].str.contains(signal, case=False, na=False)
+    return df[has_signal] if want_child else df[~has_signal]
 
 
 def export_series(engine, keyword, year_and_season, *, allowed_series_ids: set[str] | None = None):
-    program_re, want_music = _program_regex_and_music_filter(keyword)
+    program_re, signal, want_child = _program_regex_and_split_signal(keyword)
     name_pattern = f"^{program_re}{re.escape(year_and_season)}_%_"
     q = text(
         """
@@ -292,14 +317,14 @@ def export_series(engine, keyword, year_and_season, *, allowed_series_ids: set[s
         """
     )
     df = pd.read_sql(q, engine, params={"pat": name_pattern})
-    df = _apply_music_filter(df, "name", want_music)
+    df = _apply_split_filter(df, "name", signal, want_child)
     if allowed_series_ids is not None:
         df = df[df["name"].isin(allowed_series_ids)]
     return df.to_dict(orient="records")
 
 
 def export_coursenames(engine, keyword, year_and_season, *, allowed_coursename_ids: set[str] | None = None):
-    program_re, want_music = _program_regex_and_music_filter(keyword)
+    program_re, signal, want_child = _program_regex_and_split_signal(keyword)
     pat = f"^{program_re}.*{re.escape(year_and_season)}_%_.*"
     q = text(
         """
@@ -309,7 +334,7 @@ def export_coursenames(engine, keyword, year_and_season, *, allowed_coursename_i
         """
     )
     df = pd.read_sql(q, engine, params={"pat": pat})
-    df = _apply_music_filter(df, "name", want_music)
+    df = _apply_split_filter(df, "name", signal, want_child)
     if allowed_coursename_ids is not None:
         df = df[df["name"].isin(allowed_coursename_ids)]
     return df.to_dict(orient="records")
@@ -317,9 +342,9 @@ def export_coursenames(engine, keyword, year_and_season, *, allowed_coursename_i
 
 def export_sessions_with_courses(engine, keyword, year_and_season, *, allowed_barcodes: set[str] | None = None):
     # barcode alone doesn't embed series (see 3_insert_to_db.py:
-    # barcode = program + pk_prefix + Course Number) -- the music/Arts split
+    # barcode = program + pk_prefix + Course Number) -- the split filter
     # below runs on crs_fam (= c.series_id, which DOES embed series) instead.
-    program_re, want_music = _program_regex_and_music_filter(keyword)
+    program_re, signal, want_child = _program_regex_and_split_signal(keyword)
     barcode_pat = f"^{program_re}{re.escape(year_and_season)}_%_.*"
     q = text(
         """
@@ -351,7 +376,7 @@ def export_sessions_with_courses(engine, keyword, year_and_season, *, allowed_ba
         """
     )
     df = pd.read_sql(q, engine, params={"pat": barcode_pat})
-    df = _apply_music_filter(df, "crs_fam", want_music)
+    df = _apply_split_filter(df, "crs_fam", signal, want_child)
     if allowed_barcodes is not None:
         df = df[df["barcode"].isin(allowed_barcodes)]
 
