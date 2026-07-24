@@ -546,7 +546,7 @@ def main():
     _PROGRAM_DISPLAY_NAMES = {
         "Hobbies": "Hobbies & Interests",
         "Leadership": "Leadership & Employment Readiness",
-        "CampTO": "Summer camp",
+        "CampTO": "Summer Camp",
     }
 
     # Load programs_desc.csv as description source (optional)
