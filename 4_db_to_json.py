@@ -279,11 +279,32 @@ def _build_latest_allowed_barcodes(engine=None) -> set[str] | None:
 # out of it (Martial Arts, Gymnastics) -- see
 # _program_regex_and_split_signals' own docstring for why that needs
 # collecting every child mapped to a parent, not just the first one found.
+#
+# Aquatic Leadership: series tagged "Aquatic Leadership" verbatim under
+# Leadership (which has exactly two series: "Aquatic Leadership" and
+# "Leadership and Employment Readiness" -- verified real data, no
+# collision risk). Unlike every other split above, this child does NOT get
+# its own program/tile -- see PROGRAM_ABSORPTIONS below, which merges it
+# into Swim's export instead. It still needs to be registered here so
+# Leadership's own export excludes it (displayed as "Leadership &
+# Employment Readiness" post-split -- see _PROGRAM_DISPLAY_NAMES in
+# main()) and so the recursive absorption call has a real split to resolve.
 PROGRAM_SPLITS = {
     "Music": ("Arts", "music:"),
     "Martial Arts": ("Sports", "martial arts"),
     "Dance": ("Arts", "dance"),
     "Gymnastics": ("Sports", "gymnastics"),
+    "Aquatic Leadership": ("Leadership", "aquatic leadership"),
+}
+
+# Programs that absorb an already-split-out child's rows into their OWN
+# export, rather than that child getting its own separate program/tile --
+# keyed by the absorbing program's name, listing which PROGRAM_SPLITS
+# child(ren) to merge in. Reuses each child's own already-correct, fully
+# isolated export (via a recursive export_sport_season call, see below)
+# rather than re-deriving a new signal-matching rule for the merge itself.
+PROGRAM_ABSORPTIONS = {
+    "Swim": ["Aquatic Leadership"],
 }
 
 
@@ -472,7 +493,7 @@ def export_sport_season(engine, keyword, year_and_season, *, allowed_barcodes: s
         allowed_series_ids = {r["crs_fam"] for r in sessions if r.get("crs_fam")}
         allowed_coursename_ids = {r["crs_name"] for r in sessions if r.get("crs_name")}
 
-    return {
+    payload = {
         "series": export_series(
             engine,
             keyword,
@@ -488,6 +509,20 @@ def export_sport_season(engine, keyword, year_and_season, *, allowed_barcodes: s
         "sessionsWithCourses": sessions,
         "businessLocations": export_business_locations(engine, keyword),
     }
+
+    # See PROGRAM_ABSORPTIONS -- merges an already-split-out child's own
+    # (correctly isolated) export straight into this program's payload,
+    # rather than that child getting its own separate program/tile.
+    for absorbed in PROGRAM_ABSORPTIONS.get(keyword, []):
+        absorbed_payload = export_sport_season(
+            engine, absorbed, year_and_season, allowed_barcodes=allowed_barcodes
+        )
+        payload["series"] += absorbed_payload["series"]
+        payload["courseNames"] += absorbed_payload["courseNames"]
+        payload["sessionsWithCourses"] += absorbed_payload["sessionsWithCourses"]
+        payload["businessLocations"] += absorbed_payload["businessLocations"]
+
+    return payload
 
 
 def main():
@@ -510,6 +545,7 @@ def main():
     # Required when the DB program name differs from what the frontend constants (activityData.js) expect.
     _PROGRAM_DISPLAY_NAMES = {
         "Hobbies": "Hobbies and Interests",
+        "Leadership": "Leadership & Employment Readiness",
     }
 
     # Load programs_desc.csv as description source (optional)
