@@ -544,8 +544,9 @@ def main():
     # Display name overrides: maps internal export program name → frontend display name.
     # Required when the DB program name differs from what the frontend constants (activityData.js) expect.
     _PROGRAM_DISPLAY_NAMES = {
-        "Hobbies": "Hobbies and Interests",
+        "Hobbies": "Hobbies & Interests",
         "Leadership": "Leadership & Employment Readiness",
+        "CampTO": "Summer camp",
     }
 
     # Load programs_desc.csv as description source (optional)
