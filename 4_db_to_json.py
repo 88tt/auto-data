@@ -125,7 +125,7 @@ SPORTS = [
     s.strip()
     for s in os.environ.get(
         "SPORTS",
-        "Adapted Activities,Arts,CampTO,Early Years & After School,FitnessTO,Leadership,Hobbies,Martial Arts,Music,Skate & Ski,Sports,Swim",
+        "Adapted Activities,Arts,CampTO,Dance,Early Years & After School,FitnessTO,Gymnastics,Leadership,Hobbies,Martial Arts,Music,Skate & Ski,Sports,Swim",
     ).split(",")
     if s.strip()
 ]
@@ -265,48 +265,72 @@ def _build_latest_allowed_barcodes(engine=None) -> set[str] | None:
 # already tags these rows' series as "Martial Arts" verbatim (categorize
 # courses: Sports only strips the "Sports -" prefix, it doesn't rename the
 # series), so "martial arts" is the signal.
+#
+# Dance: same as Martial Arts -- the City's own source data already tags
+# these rows' series as "dance" verbatim. Verified "dance" doesn't collide
+# with any of Arts' other series names (visual arts, crafts, painting,
+# workshops, pottery/sculpture, performing arts -- none contain "dance").
+#
+# Gymnastics: same pattern again -- series tagged "Gymnastics" verbatim.
+# Verified it doesn't collide with any of Sports' other series names
+# (Tennis and Table Tennis, Soccer, Basketball, Pickleball, Multi-Sport,
+# Volleyball, Badminton, Ball Hockey, Baseball-Softball, Cricket, Adventure
+# Sports -- none contain "gymnastics"). Sports now has two children split
+# out of it (Martial Arts, Gymnastics) -- see
+# _program_regex_and_split_signals' own docstring for why that needs
+# collecting every child mapped to a parent, not just the first one found.
 PROGRAM_SPLITS = {
     "Music": ("Arts", "music:"),
     "Martial Arts": ("Sports", "martial arts"),
+    "Dance": ("Arts", "dance"),
+    "Gymnastics": ("Sports", "gymnastics"),
 }
 
 
-def _program_regex_and_split_signal(keyword: str) -> tuple[str, str | None, bool | None]:
+def _program_regex_and_split_signals(keyword: str) -> tuple[str, list[str], bool | None]:
     """DB program-prefix regex fragment for `keyword`, the split signal
-    substring to filter on (if any), and whether to keep (True) or exclude
-    (False) rows containing it -- see PROGRAM_SPLITS.
+    substring(s) to filter on, and whether to keep (True) or exclude (False)
+    rows containing any of them -- see PROGRAM_SPLITS.
 
-    Querying "(parent|child)" as the program-prefix regex (alternation)
-    matches both a DB where every row is still tagged with the parent, and
-    one where some rows have already been re-tagged with the child, in a
-    single query -- no DB write required -- and the include/exclude filter
-    this returns then keeps only the right rows from that combined result
-    either way.
+    Querying "(parent|child1|child2|...)" as the program-prefix regex
+    (alternation) matches both a DB where every row is still tagged with the
+    parent, and one where some rows have already been re-tagged with a
+    child, in a single query -- no DB write required -- and the
+    include/exclude filter this returns then keeps only the right rows from
+    that combined result either way.
 
-    Returns (program_regex_fragment, signal, want_child): want_child is True
-    to keep only signal-containing rows (when `keyword` IS the child), False
-    to exclude them (when `keyword` is the parent, so its own export doesn't
-    double-count the child's rows), None for every other keyword (no
-    filtering applied).
+    A parent can have more than one child split out of it (Arts has both
+    Music and Dance) -- this collects every child mapped to `keyword` when
+    it's a parent, not just the first one found, so a second child doesn't
+    silently leak back into the parent's own export.
+
+    Returns (program_regex_fragment, signals, want_child): want_child is
+    True to keep only rows matching `keyword`'s own signal (when `keyword`
+    IS a child), False to exclude rows matching ANY of its children's
+    signals (when `keyword` is the parent, so its own export doesn't
+    double-count them), None for every other keyword (no filtering
+    applied).
     """
     if keyword in PROGRAM_SPLITS:
         parent, signal = PROGRAM_SPLITS[keyword]
-        return f"({parent}|{keyword})", signal, True
-    for child, (parent, signal) in PROGRAM_SPLITS.items():
-        if keyword == parent:
-            return f"({parent}|{child})", signal, False
-    return re.escape(keyword), None, None
+        return f"({parent}|{keyword})", [signal], True
+    children = [(child, signal) for child, (parent, signal) in PROGRAM_SPLITS.items() if parent == keyword]
+    if children:
+        names = "|".join([keyword] + [child for child, _ in children])
+        return f"({names})", [signal for _, signal in children], False
+    return re.escape(keyword), [], None
 
 
-def _apply_split_filter(df: pd.DataFrame, column: str, signal: str | None, want_child: bool | None) -> pd.DataFrame:
-    if want_child is None:
+def _apply_split_filter(df: pd.DataFrame, column: str, signals: list[str], want_child: bool | None) -> pd.DataFrame:
+    if want_child is None or not signals:
         return df
-    has_signal = df[column].str.contains(signal, case=False, na=False)
+    pattern = "|".join(re.escape(s) for s in signals)
+    has_signal = df[column].str.contains(pattern, case=False, na=False)
     return df[has_signal] if want_child else df[~has_signal]
 
 
 def export_series(engine, keyword, year_and_season, *, allowed_series_ids: set[str] | None = None):
-    program_re, signal, want_child = _program_regex_and_split_signal(keyword)
+    program_re, signals, want_child = _program_regex_and_split_signals(keyword)
     name_pattern = f"^{program_re}{re.escape(year_and_season)}_%_"
     q = text(
         """
@@ -317,14 +341,14 @@ def export_series(engine, keyword, year_and_season, *, allowed_series_ids: set[s
         """
     )
     df = pd.read_sql(q, engine, params={"pat": name_pattern})
-    df = _apply_split_filter(df, "name", signal, want_child)
+    df = _apply_split_filter(df, "name", signals, want_child)
     if allowed_series_ids is not None:
         df = df[df["name"].isin(allowed_series_ids)]
     return df.to_dict(orient="records")
 
 
 def export_coursenames(engine, keyword, year_and_season, *, allowed_coursename_ids: set[str] | None = None):
-    program_re, signal, want_child = _program_regex_and_split_signal(keyword)
+    program_re, signals, want_child = _program_regex_and_split_signals(keyword)
     pat = f"^{program_re}.*{re.escape(year_and_season)}_%_.*"
     q = text(
         """
@@ -334,7 +358,7 @@ def export_coursenames(engine, keyword, year_and_season, *, allowed_coursename_i
         """
     )
     df = pd.read_sql(q, engine, params={"pat": pat})
-    df = _apply_split_filter(df, "name", signal, want_child)
+    df = _apply_split_filter(df, "name", signals, want_child)
     if allowed_coursename_ids is not None:
         df = df[df["name"].isin(allowed_coursename_ids)]
     return df.to_dict(orient="records")
@@ -344,7 +368,7 @@ def export_sessions_with_courses(engine, keyword, year_and_season, *, allowed_ba
     # barcode alone doesn't embed series (see 3_insert_to_db.py:
     # barcode = program + pk_prefix + Course Number) -- the split filter
     # below runs on crs_fam (= c.series_id, which DOES embed series) instead.
-    program_re, signal, want_child = _program_regex_and_split_signal(keyword)
+    program_re, signals, want_child = _program_regex_and_split_signals(keyword)
     barcode_pat = f"^{program_re}{re.escape(year_and_season)}_%_.*"
     q = text(
         """
@@ -376,7 +400,7 @@ def export_sessions_with_courses(engine, keyword, year_and_season, *, allowed_ba
         """
     )
     df = pd.read_sql(q, engine, params={"pat": barcode_pat})
-    df = _apply_split_filter(df, "crs_fam", signal, want_child)
+    df = _apply_split_filter(df, "crs_fam", signals, want_child)
     if allowed_barcodes is not None:
         df = df[df["barcode"].isin(allowed_barcodes)]
 
