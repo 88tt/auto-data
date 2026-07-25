@@ -130,6 +130,7 @@ def main():
         print(f"City: {CITY}, site: {SITE_SLUG}, seasons: {season_ids}, output: {output_dir}")
         print(f"Activity filters: {filters_to_use}")
         mismatches: list[tuple[str, str, int, int]] = []  # (activity, season_id, expected, got)
+        skipped_seasons: list[tuple[str, str]] = []  # (season_id, error message)
 
         for season_id in season_ids:
             season_url = (
@@ -138,8 +139,29 @@ def main():
             )
             print(f"\n--- Season {season_id} ---")
 
-            # Discover activities available for this season from the panel itself
-            available = su.get_activities_for_season(driver, season_url)
+            # Discover activities available for this season from the panel itself.
+            # Real failure (2026-07-25): this call had no error handling at all,
+            # unlike the per-activity scrape loop below (see its own `except
+            # Exception as e:`) -- a single season whose Activities filter panel
+            # doesn't behave as expected (timed out waiting for checkboxes to
+            # render after clicking the filter button; season 22, "ARC
+            # 2026/2027") crashed the ENTIRE run, discarding whatever seasons
+            # were still queued after it even though they have nothing to do
+            # with whatever went wrong on this one. Same "log it, skip this
+            # unit, keep going" resilience the per-activity loop already has,
+            # just one level up.
+            try:
+                available = su.get_activities_for_season(driver, season_url)
+            except Exception as e:
+                err_type = type(e).__name__
+                err_msg = str(e).strip() if str(e).strip() else "<empty message>"
+                print(
+                    f"  Error opening activities panel for season {season_id}: [{err_type}] {err_msg} -- skipping this season.",
+                    file=sys.stderr,
+                )
+                print(traceback.format_exc(), file=sys.stderr)
+                skipped_seasons.append((season_id, f"[{err_type}] {err_msg}"))
+                continue
             print(f"  {len(available)} activities in panel for season {season_id}")
 
             # Keep only those matching at least one of our activity filters
@@ -294,6 +316,17 @@ def main():
                     continue
 
         print("\nDone.")
+        if skipped_seasons:
+            # Deliberately NOT sys.exit(1) here, unlike the mismatches/csv_count
+            # checks below -- the whole point of catching this per-season instead
+            # of letting it crash the run is that a season's activities panel
+            # failing to open doesn't mean anything about whether OTHER seasons'
+            # data (already scraped and saved to disk by this point) is any
+            # good. Still printed clearly, not just buried in per-season output,
+            # so a persistently-broken season doesn't go unnoticed indefinitely.
+            print(f"\nSKIPPED SEASONS — {len(skipped_seasons)} season(s) could not be opened:", file=sys.stderr)
+            for sid, msg in skipped_seasons:
+                print(f"  [{sid}] {msg}", file=sys.stderr)
         if mismatches:
             print(f"\nSCRAPE COUNT MISMATCH — {len(mismatches)} activit(ies) did not parse all sessions:", file=sys.stderr)
             for activity, sid, expected, got in mismatches:
