@@ -204,7 +204,7 @@ jobs:
                   rows = conn.execute(
                       text(
                           "SELECT barcode FROM activities_sessions "
-                          "WHERE barcode LIKE :p ESCAPE '\\\\' "
+                          "WHERE barcode LIKE :p ESCAPE '\\' "
                           "AND (start_date >= :c OR has_enroll_now = TRUE)"
                       ),
                       {"p": pattern, "c": cutoff},
@@ -479,7 +479,7 @@ jobs:
                       row = conn.execute(
                           text(
                               "SELECT COUNT(*) as n FROM activities_sessions "
-                              "WHERE barcode LIKE :p ESCAPE '\\\\' "
+                              "WHERE barcode LIKE :p ESCAPE '\\' "
                               "AND (start_date >= :cutoff OR has_enroll_now = TRUE)"
                           ),
                           {"p": pattern, "cutoff": cutoff},
