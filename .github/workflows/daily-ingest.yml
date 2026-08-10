@@ -402,6 +402,38 @@ jobs:
           if skipped_seasons:
               print(f"Skipped seasons across all scrape groups: {len(skipped_seasons)}")
 
+          # ── 0c. Load clean_data_issues.json (missing source files + unparseable
+          # dates from 2_clean_data.py). Previously these only printed to that
+          # step's own stdout -- a row with an unparseable Date silently drops out
+          # of session_insert_mask in 3_insert_to_db.py (NaT >= cutoff is False)
+          # unless has_enroll_now happens to be set, with no trace anywhere else.
+          clean_data_missing_files = []
+          clean_data_unparsed_dates = []
+          _cdi_files = _glob.glob("raw_data/**/clean_data_issues.json", recursive=True)
+          if _cdi_files:
+              try:
+                  _cdi = json.load(open(_cdi_files[0]))
+                  clean_data_missing_files = _cdi.get("missing_files", [])
+                  clean_data_unparsed_dates = _cdi.get("unparsed_dates", [])
+                  print(f"Loaded clean_data_issues.json: {len(clean_data_missing_files)} missing files, {len(clean_data_unparsed_dates)} unparsed dates")
+              except Exception as _exc:
+                  print(f"Could not read {_cdi_files[0]}: {_exc}")
+
+          # ── 0d. Load audit_geocoding_flags.json (reverse-geocode mismatches for
+          # new centres). Previously only uploaded as a standalone CSV artifact --
+          # nothing surfaced flagged centres in the step summary itself.
+          geocoding_flags = []
+          geocoding_audited = 0
+          _gf_files = _glob.glob("raw_data/**/audit_geocoding_flags.json", recursive=True)
+          if _gf_files:
+              try:
+                  _gf = json.load(open(_gf_files[0]))
+                  geocoding_audited = _gf.get("audited", 0)
+                  geocoding_flags = _gf.get("flagged", [])
+                  print(f"Loaded audit_geocoding_flags.json: {geocoding_audited} audited, {len(geocoding_flags)} flagged")
+              except Exception as _exc:
+                  print(f"Could not read {_gf_files[0]}: {_exc}")
+
           # ── 1. Load insert summary (found vs saved per series) ────────────────
           insert_summary = []
           geocode_failures = []
@@ -598,6 +630,14 @@ jobs:
               pipeline_rows.append(
                   f"| Skipped seasons | {len(skipped_seasons)} panel timeout(s) | — | {skip_flag} |"
               )
+              _clean_issue_flag = "✅" if not (clean_data_missing_files or clean_data_unparsed_dates) else "⚠️"
+              pipeline_rows.append(
+                  f"| Clean-data issues | {len(clean_data_missing_files)} missing file(s), {len(clean_data_unparsed_dates)} unparsed date(s) | — | {_clean_issue_flag} |"
+              )
+              _geo_flag = "✅" if not geocoding_flags else "⚠️"
+              pipeline_rows.append(
+                  f"| Geocoding audit | {len(geocoding_flags)}/{geocoding_audited} flagged | — | {_geo_flag} |"
+              )
               L += [
                   "## Pipeline",
                   "",
@@ -704,6 +744,51 @@ jobs:
                   ]
                   for c in geocode_failures:
                       L.append(f"- `{c}`")
+                  L += ["</details>", ""]
+
+              # Clean-data issues (collapsed): missing/empty source files and rows
+              # whose Date text didn't parse (silently excluded from insert unless
+              # has_enroll_now is set -- see 3_insert_to_db.py session_insert_mask).
+              if clean_data_missing_files:
+                  L += [
+                      f"<details><summary>⚠️ {len(clean_data_missing_files)} missing/empty source file(s) in clean step</summary>",
+                      "",
+                      "| Activity | Series | File | Reason |",
+                      "|----------|--------|------|--------|",
+                  ]
+                  for m in clean_data_missing_files:
+                      L.append(f"| {m['activity']} | {m['series']} | {m['file']} | {m['reason']} |")
+                  L += ["</details>", ""]
+
+              if clean_data_unparsed_dates:
+                  L += [
+                      f"<details><summary>⚠️ {len(clean_data_unparsed_dates)} row(s) with unparseable Date</summary>",
+                      "",
+                      "_Dropped from insert scope unless has_enroll_now is set -- not tracked anywhere else._",
+                      "",
+                      "| Program | Series | Course # | Raw Date |",
+                      "|---------|--------|----------|----------|",
+                  ]
+                  for d in clean_data_unparsed_dates[:30]:
+                      L.append(f"| {d.get('program','')} | {d.get('series','')} | {d.get('course_number','')} | {str(d.get('Date',''))[:60]} |")
+                  if len(clean_data_unparsed_dates) > 30:
+                      L.append(f"| … | | | +{len(clean_data_unparsed_dates) - 30} more |")
+                  L += ["</details>", ""]
+
+              # Geocoding audit flags (collapsed): reverse-geocode mismatches for
+              # newly-inserted centres, or a failed reverse-geocode call.
+              if geocoding_flags:
+                  L += [
+                      f"<details><summary>⚠️ {len(geocoding_flags)}/{geocoding_audited} centres flagged by geocoding audit</summary>",
+                      "",
+                      "| Name | Stored Address | Reverse Address | Distance (m) | Reason |",
+                      "|------|-----------------|------------------|--------------:|--------|",
+                  ]
+                  for g in geocoding_flags:
+                      L.append(
+                          f"| {g.get('name','')} | {g.get('stored_address','')} | {g.get('reverse_address','')} | "
+                          f"{g.get('distance_m','')} | {g.get('flag_reason','')} |"
+                      )
                   L += ["</details>", ""]
 
               # Description gaps (collapsed)

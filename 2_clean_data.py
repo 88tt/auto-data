@@ -12,6 +12,7 @@ To run only a specific activity:
 python 2_clean_data.py ACTIVITIES="Swim,Skate"
 ```
 """
+import json
 import os
 import re
 
@@ -40,6 +41,7 @@ ACTIVITIES = [a.strip() for a in _activities_env.split(",") if a.strip()] if _ac
 # load all course families for each activity to create dfcrs
 dfcrs = pd.DataFrame()
 dfdesc = pd.DataFrame()
+_missing_files = []  # {"activity", "series", "file", "reason"} — surfaced via clean_data_issues.json
 for i, activity in enumerate(ACTIVITIES):
     crs_fams = [f for f in os.listdir(season) if activity in f]
     for j, series in enumerate(crs_fams):
@@ -53,11 +55,13 @@ for i, activity in enumerate(ACTIVITIES):
             dfcrs = pd.concat([dfcrs, df], ignore_index=True)
         except FileNotFoundError:
             print(f'File not found: {season}/{series}/courses.csv')
+            _missing_files.append({"activity": activity, "series": series, "file": "courses.csv", "reason": "not found"})
             continue
         except pd.errors.EmptyDataError:
             print(f'Empty data file: {season}/{series}/courses.csv')
+            _missing_files.append({"activity": activity, "series": series, "file": "courses.csv", "reason": "empty"})
             continue
-        # load course description 
+        # load course description
         try:
             dfdes = pd.read_csv(f'{season}/{series}/descriptions.csv')
             dfdes['series'] = series
@@ -65,9 +69,11 @@ for i, activity in enumerate(ACTIVITIES):
             dfdesc = pd.concat([dfdesc, dfdes], ignore_index=True)
         except FileNotFoundError:
             print(f'File not found: {season}/{series}/descriptions.csv')
+            _missing_files.append({"activity": activity, "series": series, "file": "descriptions.csv", "reason": "not found"})
             continue
         except pd.errors.EmptyDataError:
             print(f'Empty data file: {season}/{series}/descriptions.csv')
+            _missing_files.append({"activity": activity, "series": series, "file": "descriptions.csv", "reason": "empty"})
             continue
 
 if dfcrs.empty:
@@ -300,6 +306,22 @@ dfcrs['end_time'] = pd.to_datetime(dfcrs['end_time'].str.lower().str.replace('no
 dfcrs['start_date'] = pd.to_datetime(dfcrs['Date'].str.extract(r'(\w+ \d{1,2}, \d{4})', expand=False))
 dfcrs['end_date'] = pd.to_datetime(dfcrs['Date'].str.extract(r'to (\w+ \d{1,2}, \d{4})', expand=False))
 
+# Rows whose 'Date' text didn't match the regex end up with start_date = NaT. Downstream,
+# 3_insert_to_db.py's session_insert_mask (start_date >= cutoff) OR has_enroll_now excludes
+# any such row silently unless it happens to have Enroll Now active -- surface them here so
+# that silent exclusion is visible instead of untracked.
+_unparsed_date_mask = dfcrs['start_date'].isna()
+_unparsed_date_count = int(_unparsed_date_mask.sum())
+if _unparsed_date_count > 0:
+    print(f"WARNING: {_unparsed_date_count} rows have an unparseable Date and will be dropped unless has_enroll_now is set.")
+    _unparsed_dates = (
+        dfcrs.loc[_unparsed_date_mask, ['program', 'series', 'Name', 'Course Number', 'Date']]
+        .rename(columns={'Course Number': 'course_number'})
+        .to_dict(orient='records')
+    )
+else:
+    _unparsed_dates = []
+
 # extract min & max age
 def _norm_age_text(value):
     if pd.isna(value):
@@ -398,3 +420,11 @@ else:
 
 # save dfcrs to csv
 dfcrs.to_csv(f'{season}/dfcrs.csv', index=False)
+
+# Surface this run's silent-skip risks (missing/empty source files, unparseable dates) so
+# they're visible downstream instead of only appearing in this step's own stdout. Overwritten
+# on every invocation of this script (group-a/b/c/combined all run sequentially in the same
+# job, and the final "combined" run covers the same underlying files as the union of the
+# group runs, so its issues list is already the complete one).
+with open(f'{season}/clean_data_issues.json', 'w') as f:
+    json.dump({"missing_files": _missing_files, "unparsed_dates": _unparsed_dates}, f, indent=2, default=str)

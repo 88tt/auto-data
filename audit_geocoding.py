@@ -15,9 +15,11 @@ Usage:
 """
 
 import argparse
+import json
 import math
 import os
 import time
+from pathlib import Path
 
 from dotenv import load_dotenv
 load_dotenv()  # must run before config imports so DATABASE_URL is set
@@ -188,6 +190,24 @@ def main():
     if not results.empty:
         results.to_csv(args.out, index=False)
         print(f"\nResults written to {args.out}")
+
+    # This CSV is only uploaded as a standalone run artifact -- nothing ever surfaced
+    # flagged rows in the daily step summary, so a bad-coordinate centre could only be
+    # found by manually downloading and opening it. Write a small summary into the
+    # season dir (which the daily workflow already bundles into raw_data/ for the
+    # export job) so the step summary can pick it up like geocode_failures/skipped_seasons.
+    # Written unconditionally, even when nothing was audited, so "checked, 0 flagged" is
+    # distinguishable from "this step never ran."
+    flagged_records = []
+    if not results.empty:
+        flagged_records = results[results["flag"]][
+            [c for c in ["name", "stored_address", "reverse_address", "distance_m", "flag_reason"] if c in results.columns]
+        ].to_dict(orient="records")
+    try:
+        with open(Path(config.season) / "audit_geocoding_flags.json", "w") as f:
+            json.dump({"audited": int(len(results)), "flagged": flagged_records}, f, indent=2, default=str)
+    except Exception as exc:
+        print(f"Could not write audit_geocoding_flags.json: {exc}")
 
 
 if __name__ == "__main__":
