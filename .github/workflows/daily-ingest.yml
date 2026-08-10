@@ -65,6 +65,7 @@ jobs:
       - name: Scrape (${{ matrix.group }})
         env:
           ACTIVITIES: ${{ matrix.activities }}
+          GROUP: ${{ matrix.group }}
         run: python 1_scrape_w_selenium.py
 
       - name: Upload raw data (${{ matrix.group }})
@@ -383,6 +384,24 @@ jobs:
           else:
               print("losslessness_insert.json not found — DB→JSON losslessness check will be partial")
 
+          # ── 0b. Load skipped_seasons_*.json (one per scrape matrix group) ──────
+          # Previously only printed to a scrape job's own stderr, never surfaced
+          # here -- a season's activities panel timing out (scraped OK for every
+          # OTHER season that day, just silently missing this one) produced no
+          # visible signal anywhere a human would actually look. Real occurrence:
+          # 2026-08-10, group-a, season 24 (CampTO 2026) timed out and was
+          # skipped -- found only by manually reading raw scrape logs.
+          skipped_seasons = []
+          for _sf in _glob.glob("raw_data/**/skipped_seasons_*.json", recursive=True):
+              try:
+                  _group = os.path.basename(_sf).removeprefix("skipped_seasons_").removesuffix(".json")
+                  for _entry in json.load(open(_sf)):
+                      skipped_seasons.append({"group": _group, **_entry})
+              except Exception as _exc:
+                  print(f"Could not read {_sf}: {_exc}")
+          if skipped_seasons:
+              print(f"Skipped seasons across all scrape groups: {len(skipped_seasons)}")
+
           # ── 1. Load insert summary (found vs saved per series) ────────────────
           insert_summary = []
           geocode_failures = []
@@ -575,6 +594,10 @@ jobs:
               pipeline_rows.append(
                   f"| Descriptions | {total_desc_missing} missing ({desc_pct}) | — | {desc_flag} |"
               )
+              skip_flag = "✅" if not skipped_seasons else "⚠️"
+              pipeline_rows.append(
+                  f"| Skipped seasons | {len(skipped_seasons)} panel timeout(s) | — | {skip_flag} |"
+              )
               L += [
                   "## Pipeline",
                   "",
@@ -652,6 +675,23 @@ jobs:
                       if len(sess_nums) > 15:
                           nums_str += f" … +{len(sess_nums) - 15} more"
                       L.append(f"| {sport} | {centre} | {len(sess_nums)} | {nums_str} |")
+                  L += ["</details>", ""]
+
+              # Skipped seasons (collapsed) -- a scrape-time panel timeout, not a
+              # data-quality issue in what WAS scraped; surfaced separately from
+              # geocoding/description gaps since it means something wasn't even
+              # attempted, not that it was attempted and came back thin.
+              if skipped_seasons:
+                  L += [
+                      f"<details><summary>⚠️ {len(skipped_seasons)} season(s) skipped during scrape (panel timeout)</summary>",
+                      "",
+                      "_These activity/season combinations were not scraped at all today -- retried automatically tomorrow._",
+                      "",
+                      "| Group | Season ID | Error |",
+                      "|-------|-----------|-------|",
+                  ]
+                  for s in skipped_seasons:
+                      L.append(f"| {s['group']} | {s['season_id']} | {s['error'][:120]} |")
                   L += ["</details>", ""]
 
               # Geocoding failures (collapsed)

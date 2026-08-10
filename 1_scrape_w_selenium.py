@@ -38,6 +38,12 @@ ACTIVITIES = os.environ.get(
 ACTIVITIES = [a.strip() for a in ACTIVITIES if a.strip()]
 # Single filter (optional): if set, only this filter is used instead of looping ACTIVITIES.
 ACTIVITY_FILTER = os.environ.get("ACTIVITY_FILTER", "")
+# Matrix group label (e.g. "group-a"), only set in CI -- used to give this
+# run's skipped_seasons.json a unique filename. All 3 scrape matrix groups
+# compute the SAME date-based output_dir on the same day, so a fixed
+# filename would let whichever group's upload merges last silently clobber
+# the others' skip reports.
+GROUP = os.environ.get("GROUP", "default")
 # Site slug: path segment in Active Communities URL (e.g. toronto, vaughan).
 SITE_SLUG = os.environ.get("SITE_SLUG", "toronto")
 # Season names to scrape — matched against the WHEN panel labels at runtime so IDs
@@ -316,6 +322,24 @@ def main():
                     continue
 
         print("\nDone.")
+        # Written unconditionally (even when empty) so the export job's step
+        # summary can tell "checked this group, found no skips" apart from
+        # "this file never showed up at all" -- same convention as
+        # notes_extraction_attempted elsewhere in this pipeline family.
+        # Previously this was ONLY printed to stderr, buried in per-group scrape
+        # logs the daily step summary never surfaced -- confirmed via a live
+        # occurrence (2026-08-10, group-a, season 24/CampTO 2026 timed out) that
+        # nobody would notice without manually digging through raw job logs.
+        skipped_path = os.path.join(output_dir, f"skipped_seasons_{GROUP}.json")
+        try:
+            with open(skipped_path, "w") as f:
+                json.dump(
+                    [{"season_id": sid, "error": msg} for sid, msg in skipped_seasons],
+                    f,
+                    indent=2,
+                )
+        except Exception as write_err:
+            print(f"Warning: could not write {skipped_path}: {write_err}", file=sys.stderr)
         if skipped_seasons:
             # Deliberately NOT sys.exit(1) here, unlike the mismatches/csv_count
             # checks below -- the whole point of catching this per-season instead
