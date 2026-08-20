@@ -293,6 +293,23 @@ jobs:
           name: dfcrs-combined
           path: raw_data/
 
+      # Fallback when the scrape job itself failed (e.g. scrape_errors -- an
+      # activity produced no data): insert never runs in that case (its `needs:
+      # scrape` is unmet), so "dfcrs-combined" above is never uploaded and
+      # raw_data/ stays empty -- meaning scrape_error.json / skipped_seasons
+      # never reach the "Validate output files" step below and the failure
+      # goes undetailed in the summary even though the job correctly shows
+      # red. Pull the per-group artifacts scrape uploads directly (with
+      # `if: always()`, so they exist even when that group's step failed).
+      - name: Download raw scrape data (fallback when insert did not run)
+        if: ${{ github.event.inputs.export_only != 'true' && needs.insert.result != 'success' }}
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: raw-data-*
+          path: raw_data/
+          merge-multiple: true
+
       - name: Export JSON to target
         if: needs.insert.result == 'success' || needs.insert.result == 'skipped'
         env:
@@ -433,6 +450,24 @@ jobs:
                   print(f"Loaded audit_geocoding_flags.json: {geocoding_audited} audited, {len(geocoding_flags)} flagged")
               except Exception as _exc:
                   print(f"Could not read {_gf_files[0]}: {_exc}")
+
+          # ── 0e. Load scrape_error.json (per-activity exceptions during scraping,
+          # e.g. a stale/vanished "View more" button). Written unconditionally by
+          # 1_scrape_w_selenium.py's per-activity except block once retries are
+          # exhausted, but previously only ever landed on disk -- never read by
+          # anything -- so an activity going fully missing for a season (real
+          # occurrence: 2026-08-20, CampTO Extended Hours, season 24) produced no
+          # signal anywhere. The run still exits 0 (this is caught, not raised),
+          # so there's no failure email either -- this summary section is the
+          # only place a human will see it without digging through raw logs.
+          scrape_errors = []
+          for _se in _glob.glob("raw_data/**/scrape_error.json", recursive=True):
+              try:
+                  scrape_errors.append(json.load(open(_se)))
+              except Exception as _exc:
+                  print(f"Could not read {_se}: {_exc}")
+          if scrape_errors:
+              print(f"Scrape errors: {len(scrape_errors)}")
 
           # ── 1. Load insert summary (found vs saved per series) ────────────────
           insert_summary = []
@@ -630,6 +665,10 @@ jobs:
               pipeline_rows.append(
                   f"| Skipped seasons | {len(skipped_seasons)} panel timeout(s) | — | {skip_flag} |"
               )
+              scrape_err_flag = "✅" if not scrape_errors else "⚠️"
+              pipeline_rows.append(
+                  f"| Scrape errors | {len(scrape_errors)} activity failure(s) | — | {scrape_err_flag} |"
+              )
               _clean_issue_flag = "✅" if not (clean_data_missing_files or clean_data_unparsed_dates) else "⚠️"
               pipeline_rows.append(
                   f"| Clean-data issues | {len(clean_data_missing_files)} missing file(s), {len(clean_data_unparsed_dates)} unparsed date(s) | — | {_clean_issue_flag} |"
@@ -732,6 +771,25 @@ jobs:
                   ]
                   for s in skipped_seasons:
                       L.append(f"| {s['group']} | {s['season_id']} | {s['error'][:120]} |")
+                  L += ["</details>", ""]
+
+              # Scrape errors (collapsed) -- an activity that WAS attempted but raised
+              # an exception (e.g. a stale/vanished pagination button) after exhausting
+              # retries. Unlike skipped seasons, this activity has NO courses.csv at
+              # all for today -- distinct from the coordinates/description gaps above,
+              # which are about scraped data that came back thin, not missing entirely.
+              if scrape_errors:
+                  L += [
+                      f"<details><summary>⚠️ {len(scrape_errors)} activity scrape error(s)</summary>",
+                      "",
+                      "_These activities produced no data today at all -- retried automatically tomorrow._",
+                      "",
+                      "| Activity | Season ID | Error |",
+                      "|----------|-----------|-------|",
+                  ]
+                  for e in scrape_errors:
+                      err = f"[{e.get('error_type','')}] {e.get('error_message','')}"[:120]
+                      L.append(f"| {e.get('activity_name','')} | {e.get('season_id','')} | {err} |")
                   L += ["</details>", ""]
 
               # Geocoding failures (collapsed)

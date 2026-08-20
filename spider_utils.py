@@ -160,8 +160,10 @@ def click_view_more_until_exhausted(driver) -> None:
             # Re-find immediately before clicking — the reference can go stale during scrollIntoView
             view_more_button = driver.find_element(By.XPATH, VIEW_MORE_BUTTON_XPATH)
             driver.execute_script("arguments[0].click();", view_more_button)
-        except StaleElementReferenceException:
-            # DOM updated between find and click — re-find and JS-click once more
+        except (NoSuchElementException, StaleElementReferenceException):
+            # Button went stale OR vanished from the DOM entirely between the wait
+            # above and this re-find (e.g. it was the last page) — re-find and
+            # JS-click once more before giving up.
             try:
                 view_more_button = driver.find_element(By.XPATH, VIEW_MORE_BUTTON_XPATH)
                 driver.execute_script("arguments[0].click();", view_more_button)

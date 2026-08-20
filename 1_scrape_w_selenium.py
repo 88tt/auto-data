@@ -137,6 +137,7 @@ def main():
         print(f"Activity filters: {filters_to_use}")
         mismatches: list[tuple[str, str, int, int]] = []  # (activity, season_id, expected, got)
         skipped_seasons: list[tuple[str, str]] = []  # (season_id, error message)
+        scrape_errors: list[tuple[str, str, str]] = []  # (activity, season_id, error message)
 
         for season_id in season_ids:
             season_url = (
@@ -207,11 +208,32 @@ def main():
                         if attempt == 1:
                             header_total_initial = _parse_total_courses(raw_initial)
 
-                        su.click_view_more_until_exhausted(driver)
-                        df_attempt = su.get_course_info(driver)
-                        dfdesc_attempt = su.get_course_description(driver, df_attempt)
-                        header_total_final = _header_total_from_page_source(driver.page_source)
-                        n_attempt = df_attempt.shape[0]
+                        # Real failure (2026-08-20): an exception raised anywhere in this
+                        # block (e.g. click_view_more_until_exhausted hitting a stale/
+                        # vanished "View more" button) used to escape the retry loop
+                        # entirely and land in the outer `except Exception` below, which
+                        # abandons the WHOLE activity after a single attempt -- unlike the
+                        # count-mismatch case just below, which gets MAX_SCRAPE_RETRIES
+                        # tries. Give mid-scrape exceptions the same retry treatment;
+                        # only give up (re-raise to the outer handler) once retries are
+                        # exhausted.
+                        try:
+                            su.click_view_more_until_exhausted(driver)
+                            df_attempt = su.get_course_info(driver)
+                            dfdesc_attempt = su.get_course_description(driver, df_attempt)
+                            header_total_final = _header_total_from_page_source(driver.page_source)
+                            n_attempt = df_attempt.shape[0]
+                        except Exception as attempt_exc:
+                            if attempt < MAX_SCRAPE_RETRIES:
+                                print(
+                                    f"    Attempt {attempt}/{MAX_SCRAPE_RETRIES} failed for "
+                                    f"{activity_name} (season {season_id}): "
+                                    f"[{type(attempt_exc).__name__}] {attempt_exc}. "
+                                    f"Retrying in {SCRAPE_RETRY_WAIT}s…"
+                                )
+                                time.sleep(SCRAPE_RETRY_WAIT)
+                                continue
+                            raise
 
                         if n_attempt > best_n:
                             best_n = n_attempt
@@ -319,6 +341,13 @@ def main():
                             f"    Warning: could not write {err_path}: {write_err}",
                             file=sys.stderr,
                         )
+                    # Real failure (2026-08-20): this activity produced NO courses.csv
+                    # today (CampTO Extended Hours, season 24) and previously nothing
+                    # forced the run to fail, so no notification ever fired -- the gap
+                    # was only found by visually checking kebu.ca. Collected here (like
+                    # mismatches below) so the run keeps scraping everything else, but
+                    # still fails at the end if any activity is left with missing data.
+                    scrape_errors.append((activity_name, season_id, f"[{err_type}] {err_msg}"))
                     continue
 
         print("\nDone.")
@@ -351,10 +380,20 @@ def main():
             print(f"\nSKIPPED SEASONS — {len(skipped_seasons)} season(s) could not be opened:", file=sys.stderr)
             for sid, msg in skipped_seasons:
                 print(f"  [{sid}] {msg}", file=sys.stderr)
+        if scrape_errors:
+            # Unlike skipped_seasons above, a scrape error means an activity that WAS
+            # attempted came back with nothing (not just "couldn't check this season").
+            # That's a real gap in what ships to kebu.ca, so this fails the run --
+            # deliberately unlike skipped_seasons, which doesn't say anything about
+            # whether other seasons' data is any good.
+            print(f"\nSCRAPE ERRORS — {len(scrape_errors)} activit(ies) produced no data:", file=sys.stderr)
+            for activity, sid, msg in scrape_errors:
+                print(f"  [{sid}] {activity}: {msg}", file=sys.stderr)
         if mismatches:
             print(f"\nSCRAPE COUNT MISMATCH — {len(mismatches)} activit(ies) did not parse all sessions:", file=sys.stderr)
             for activity, sid, expected, got in mismatches:
                 print(f"  [{sid}] {activity}: expected {expected}, got {got} (missing {expected - got})", file=sys.stderr)
+        if scrape_errors or mismatches:
             sys.exit(1)
 
         csv_count = sum(
