@@ -286,32 +286,48 @@ def initiate_and_get_all_activities(site_slug="toronto"):
     return programs, driver
 
 
-def get_season_id_map(driver, site_slug):
+def get_season_id_map(driver, site_slug, *, _max_retries: int = 3):
     """
     Open the WHEN filter panel on the activity search page and return a dict of
     {season_name: season_id} for every season listed. Clicks View more until all
     seasons are visible. Use this to resolve human-readable season names to IDs
     at runtime instead of hardcoding IDs that change each year.
+    Retries up to _max_retries times on filter-panel timeout -- same pattern as
+    choose_activity_by_filter_checkbox. Real failure (2026-08-24): this had no
+    retry (or even a try/except) at all, called once at the very top of main()
+    before a single activity was scraped -- a single slow render of the WHEN
+    panel crashed the whole scrape script uncaught.
     """
     base_url = (
         f"https://anc.ca.apm.activecommunities.com/{site_slug}/activity/search"
         f"?onlineSiteId=0&viewMode=list"
     )
-    driver.get(base_url)
-    WebDriverWait(driver, WAIT_TIMEOUT).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, ".search-group__when, [class*='search-group']"))
-    )
-    time.sleep(1)
+    last_exc: Exception | None = None
+    for attempt in range(1, _max_retries + 1):
+        try:
+            driver.get(base_url)
+            WebDriverWait(driver, WAIT_TIMEOUT).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".search-group__when, [class*='search-group']"))
+            )
+            time.sleep(1)
 
-    # Open the WHEN filter panel
-    when_btn = WebDriverWait(driver, WAIT_TIMEOUT).until(
-        EC.element_to_be_clickable((By.CSS_SELECTOR, "[aria-label*='When']"))
-    )
-    when_btn.click()
-    WebDriverWait(driver, WAIT_TIMEOUT).until(
-        EC.presence_of_element_located((By.XPATH, "//fieldset[.//legend[normalize-space(.)='Season']]"))
-    )
-    time.sleep(0.5)
+            # Open the WHEN filter panel
+            when_btn = WebDriverWait(driver, WAIT_TIMEOUT).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "[aria-label*='When']"))
+            )
+            when_btn.click()
+            WebDriverWait(driver, WAIT_TIMEOUT).until(
+                EC.presence_of_element_located((By.XPATH, "//fieldset[.//legend[normalize-space(.)='Season']]"))
+            )
+            time.sleep(0.5)
+            break  # panel opened successfully
+        except TimeoutException as exc:
+            last_exc = exc
+            if attempt < _max_retries:
+                print(f"    WHEN panel timeout (attempt {attempt}/{_max_retries}), retrying in 5s…")
+                time.sleep(5)
+            else:
+                raise last_exc
 
     # Expand all seasons (View more loop)
     while True:

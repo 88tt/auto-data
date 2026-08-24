@@ -119,7 +119,16 @@ def main():
             season_ids = SEASON_IDS_OVERRIDE
             print(f"Using explicit SEASON_IDS override: {season_ids}")
         else:
-            season_map = su.get_season_id_map(driver, SITE_SLUG)
+            try:
+                season_map = su.get_season_id_map(driver, SITE_SLUG)
+            except Exception as e:
+                # get_season_id_map already retries transient WHEN-panel timeouts;
+                # if it's still failing after that, there's nothing to scrape for
+                # this group at all -- fail clearly instead of an uncaught traceback.
+                err_type = type(e).__name__
+                err_msg = str(e).strip() if str(e).strip() else "<empty message>"
+                print(f"Could not resolve season IDs: [{err_type}] {err_msg}", file=sys.stderr)
+                sys.exit(1)
             print(f"Available seasons on site: {season_map}")
             season_ids = []
             for name in SEASON_NAMES:
