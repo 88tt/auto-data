@@ -20,7 +20,10 @@ from ast import literal_eval
 from types import SimpleNamespace
 
 sleep_time = 2
-WAIT_TIMEOUT = 30  # seconds for explicit waits (30 for CI, 15 was too short)
+WAIT_TIMEOUT = 45  # seconds for explicit waits (30 for CI, 15 was too short; bumped again
+                    # 2026-08-24 -- get_season_id_map hit 3/3 real 30s timeouts on the WHEN
+                    # panel from GitHub Actions during Fall-registration launch traffic, while
+                    # the identical headless flags reproduced cleanly in 4.6s from a non-CI IP)
 
 _GOOGLE_MAX_RETRIES = 4
 _GOOGLE_BACKOFF_BASE = 2  # seconds; doubles each retry
