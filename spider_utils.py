@@ -17,6 +17,7 @@ import os
 import openai
 from openai import OpenAI
 from ast import literal_eval
+from types import SimpleNamespace
 
 sleep_time = 2
 WAIT_TIMEOUT = 30  # seconds for explicit waits (30 for CI, 15 was too short)
@@ -751,19 +752,32 @@ def get_course_description(driver, df):
 def get_crs_name_desc(prompt):
     api_key = os.getenv('OPENAI_API_KEY')
     if not api_key:
-        raise ValueError("No API key found. Please set the MY_API_KEY environment variable.")    
-    
+        raise ValueError("No API key found. Please set the MY_API_KEY environment variable.")
+
     client = OpenAI()
-    completion = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant for summarizing course descriptions. You will be given a series of related courses that you will summarize in one concise paragraph to create a series level summary"},
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
-    )
+    try:
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant for summarizing course descriptions. You will be given a series of related courses that you will summarize in one concise paragraph to create a series level summary"},
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
+    except openai.OpenAIError as exc:
+        # Real failure (2026-08-24): an exhausted OpenAI credit balance raised
+        # here uncaught, crashing 3_insert_to_db.py mid-run -- after group-a's
+        # sessions were already committed, but before group-b/c's Clean+Insert
+        # steps even started (no continue-on-error on those steps), losing a
+        # whole day's data for programs that had nothing to do with OpenAI.
+        # Same "log it, degrade gracefully" pattern _google_api_get already
+        # uses -- callers get an empty description instead of a crash, and the
+        # existing description-coverage check (daily-ingest.yml, 5% threshold)
+        # still surfaces it if this leaves too many sessions undescribed.
+        print(f"get_crs_name_desc: OpenAI call failed ({type(exc).__name__}): {exc}")
+        return SimpleNamespace(content="")
     print('done')
     return completion.choices[0].message
 
