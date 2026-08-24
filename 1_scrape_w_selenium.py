@@ -52,7 +52,7 @@ SEASON_NAMES = [
     s.strip()
     for s in os.environ.get(
         "SEASON_NAMES",
-        "Summer 2026,CampTO 2026,Leadership 2026,ARC 2026/2027",
+        "Fall 2026,CampTO 2026,Leadership 2026,ARC 2026/2027",
     ).split(",")
     if s.strip()
 ]

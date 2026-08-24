@@ -7,7 +7,7 @@ import os
 # Run / season (used by scripts 1, 2, 3)
 # ---------------------------------------------------------------------------
 CITY = os.environ.get("CITY", "To")
-YEAR_AND_SEASON = os.environ.get("YEAR_AND_SEASON", os.environ.get("SEASON", "2026s3To"))
+YEAR_AND_SEASON = os.environ.get("YEAR_AND_SEASON", os.environ.get("SEASON", "2026s4To"))
 RAW_DATA_DIR = os.environ.get("RAW_DATA_DIR", f"raw_data/{CITY}/{YEAR_AND_SEASON}")
 pk_prefix = os.environ.get("PK_PREFIX", f"{YEAR_AND_SEASON}_%_")
 # Only insert sessions on or after this date (e.g. start of current season)
