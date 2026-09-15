@@ -211,7 +211,26 @@ def _build_latest_allowed_barcodes(engine=None) -> set[str] | None:
             work["has_enroll_now"] = enroll.values
         else:
             work["has_enroll_now"] = False
-        in_scope = (work["start_date"] >= cutoff) | work["has_enroll_now"]
+        # Location.notna() matches the exact same in-scope definition the
+        # insert step's and 5_check_data.py's own independent
+        # losslessness/reference-scope calculations already apply (both
+        # filter on dfcrs["Location"].notna()) -- omitting it here was a real
+        # bug: a dfcrs row that's in date/enroll_now scope but has no
+        # Location (tracked separately as "no_location_in_scrape" -- the row
+        # still gets inserted, since its centre often resolves to known
+        # lat/lng via a centre-name join rather than needing its own raw
+        # Location string) was counted as an allowed barcode here but
+        # excluded from the other two scripts' reference counts, so the
+        # export ended up with exactly one more session than the
+        # DB→JSON losslessness check expected. Guarded like has_enroll_now
+        # above rather than added to needed_cols, since dfcrs.csv without a
+        # Location column at all should still fall back to exporting
+        # everything in scope rather than erroring out.
+        if "Location" in df.columns:
+            has_location = df["Location"].notna()
+        else:
+            has_location = pd.Series(True, index=df.index)
+        in_scope = ((work["start_date"] >= cutoff) | work["has_enroll_now"]) & has_location
         work = work[in_scope]
         work = work.dropna(subset=["program", "Course Number"])
         work["Course Number"] = work["Course Number"].astype(str).str.replace("#", "", regex=False).str.strip()
