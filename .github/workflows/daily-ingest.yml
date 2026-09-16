@@ -10,6 +10,8 @@ on:
     - cron: "30 11 * * *"
     # 09:30 Toronto (EDT): 13:30 UTC. Winter EST: use "30 14 * * *" instead.
     - cron: "30 13 * * *"
+    # 12:00 Toronto (EDT): 16:00 UTC. Winter EST: use "0 17 * * *" instead.
+    - cron: "0 16 * * *"
     # 16:00 Toronto (EDT): 20:00 UTC. Winter EST: use "0 21 * * *" instead.
     - cron: "0 20 * * *"
     # 19:00 Toronto (EDT): 23:00 UTC. Winter EST: use "0 0 * * *" instead.
