@@ -153,6 +153,8 @@ jobs:
           import pandas as pd
           from sqlalchemy import create_engine, text
 
+          import config
+
           YEAR_AND_SEASON   = os.environ["YEAR_AND_SEASON"]
           STARTDATE_CUTOFF  = os.environ.get("STARTDATE_CUTOFF", "2026-03-01")
           pk_prefix         = f"{YEAR_AND_SEASON}_%_"
@@ -198,7 +200,7 @@ jobs:
           db_error = None
           try:
               engine = create_engine(
-                  os.environ["DATABASE_URL"],
+                  config.DB_URL,
                   connect_args={"connect_timeout": 30},
               )
               with engine.connect() as conn:
@@ -423,6 +425,8 @@ jobs:
           from collections import defaultdict
           from datetime import datetime, timezone
 
+          import config
+
           season        = os.environ["YEAR_AND_SEASON"]
           data_dir      = "target/public/data"
           summary_path  = os.environ.get("GITHUB_STEP_SUMMARY", "")
@@ -596,7 +600,7 @@ jobs:
           def _like_escape(s):
               return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
-          db_url = os.environ.get("DATABASE_URL", "")
+          db_url = config.DB_URL if os.environ.get("DATABASE_URL") else ""
           if db_url:
               try:
                   import pandas as pd

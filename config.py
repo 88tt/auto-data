@@ -2,6 +2,7 @@
 Shared config for the pipeline (scripts 1, 2, 3). Override with env vars.
 """
 import os
+import re
 
 # ---------------------------------------------------------------------------
 # Run / season (used by scripts 1, 2, 3)
@@ -34,7 +35,13 @@ season = _latest_scrape_dir()
 # Script 3: database
 # ---------------------------------------------------------------------------
 # Support DATABASE_URL (Neon/CI format) or DB_URL; fall back to local dev default.
-DB_URL = os.environ.get("DATABASE_URL", os.environ.get("DB_URL", "postgresql://localhost:5432/dev"))
+# Force the psycopg2 driver regardless of what scheme the URL specifies (e.g. a
+# provider-issued "postgresql+psycopg://" string): psycopg2 leaves bind params
+# untyped, letting Postgres implicitly coerce them (e.g. str -> time); psycopg
+# (v3) renders explicit ::VARCHAR casts on the same params, which Postgres then
+# refuses to implicitly cast into typed columns like start_time/end_time.
+_raw_db_url = os.environ.get("DATABASE_URL", os.environ.get("DB_URL", "postgresql://localhost:5432/dev"))
+DB_URL = re.sub(r"^postgres(?:ql)?(?:\+\w+)?://", "postgresql+psycopg2://", _raw_db_url)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
