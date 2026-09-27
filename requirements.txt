@@ -5,6 +5,7 @@ beautifulsoup4
 lxml
 sqlalchemy
 psycopg2-binary
+psycopg[binary]
 requests
 python-dotenv
 openai
