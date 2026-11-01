@@ -1,0 +1,34 @@
+{
+  "Cedar Ridge Creative Centre | 225 Confederation Dr, Scarborough, ON M1G 1B2, Canada": {
+    "checked": "2026-11-01",
+    "city_location": null,
+    "google_address": "225 Confederation Dr, Scarborough, ON M1G 1B2, Canada",
+    "km": null,
+    "reason": "Cedar Ridge Creative Centre is a recognized location in Scarborough, ON.",
+    "verdict": "venue"
+  },
+  "Clark Centre for the Arts | 191 Guildwood Pkwy, Scarborough, ON M1E 1P5, Canada": {
+    "checked": "2026-11-01",
+    "city_location": null,
+    "google_address": "191 Guildwood Pkwy, Scarborough, ON M1E 1P5, Canada",
+    "km": null,
+    "reason": "Clark Centre for the Arts is a recognized location in Scarborough, Ontario.",
+    "verdict": "venue"
+  },
+  "Gymnasium - South | 100 Devonshire Pl, Toronto, ON M5S 2C9, Canada": {
+    "checked": "2026-11-01",
+    "city_location": "Etobicoke Olympium, 590 Rathburn Rd (Location ID 892)",
+    "google_address": "100 Devonshire Pl, Toronto, ON M5S 2C9, Canada",
+    "km": 15.1,
+    "reason": "The name 'Gymnasium - South' suggests it is a specific area within a larger facility rather than a standalone venue.",
+    "verdict": "room"
+  },
+  "St. Michael Catholic School | 50 George St S, Toronto, ON M5A 4B2, Canada": {
+    "checked": "2026-11-01",
+    "city_location": null,
+    "google_address": "50 George St S, Toronto, ON M5A 4B2, Canada",
+    "km": null,
+    "reason": "St. Michael Catholic School is a real school location in Toronto.",
+    "verdict": "venue"
+  }
+}

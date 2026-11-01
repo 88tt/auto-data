@@ -360,6 +360,7 @@ jobs:
         if: needs.insert.result == 'success' || needs.insert.result == 'skipped'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}  # location_screen.py
           OUT_DIR: ${{ github.workspace }}/target/public/data
           SCRAPE_RUN: scraped${{ github.run_id }}
           EXPORT_LATEST_SCRAPE_ONLY: "1"
