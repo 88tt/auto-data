@@ -56,6 +56,9 @@ CITY_CENTRES_JSON = "https://www.toronto.ca/data/parks/live/locations/centres.js
 CITY_INFO_JSON = "https://www.toronto.ca/data/parks/live/locations/{id}/info.json"
 USER_AGENT = "kebu-data-prep/1.0"
 
+# Read by daily-ingest.yml's "Validate output files" so intentional drops
+# aren't counted as lost sessions. Not under OUT_DIR, so never published.
+REPORT_PATH = Path(os.environ.get("LOCATION_SCREEN_REPORT", "location_screen_report.json"))
 VERDICTS_PATH = Path(os.environ.get("LOCATION_VERDICTS", Path(__file__).with_name("location_verdicts.json")))
 FLAG_KM = 2.0
 TORONTO_BOX = (43.55, 43.87, -79.65, -79.10)  # lat min/max, lng min/max
@@ -140,6 +143,7 @@ class LocationScreen:
         self._city_locations = None
         self._decided = {}  # centre -> "keep" | "room" | "online"
         self.log = []  # lines for the report
+        self.dropped_sessions = 0
 
     # -- City data (loaded on first use; any failure means "no City match") --
 
@@ -243,6 +247,7 @@ class LocationScreen:
         for s in sessions:
             decision = self._decided.get(s.get("centre"), "keep")
             if decision == "room":
+                self.dropped_sessions += 1
                 continue
             if decision == "online":
                 s = {**s, "is_online": True, "latitude": None, "longitude": None, "address": None}
@@ -254,7 +259,10 @@ class LocationScreen:
         self.verdicts_path.write_text(json.dumps(self.verdicts, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
         dropped = sorted(_strip_prefix(c) for c, d in self._decided.items() if d == "room")
         online = sorted(_strip_prefix(c) for c, d in self._decided.items() if d == "online")
-        report = "\n".join([f"dropped (room names): {', '.join(dropped) or 'none'}",
+        REPORT_PATH.write_text(json.dumps(
+            {"dropped_sessions": self.dropped_sessions, "dropped_centres": dropped, "online_centres": online}, indent=2
+        ) + "\n")
+        report = "\n".join([f"dropped (room names): {', '.join(dropped) or 'none'} ({self.dropped_sessions} sessions)",
                             f"online: {', '.join(online) or 'none'}", *self.log])
         print("Location screen:\n" + report)
         summary = os.environ.get("GITHUB_STEP_SUMMARY")
