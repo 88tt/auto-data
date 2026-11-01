@@ -41,6 +41,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 import config
+from location_screen import LocationScreen
 
 
 def _json_serial(obj):
@@ -579,6 +580,7 @@ def main():
     else:
         print(f"Note: programs_desc not found at {programs_csv}, will write programs.json from export counts.")
 
+    screen = LocationScreen()
     export_counts = []
     centre_programs: dict[str, list[str]] = {}  # centre name -> [program, ...]
     for sport in SPORTS:
@@ -589,6 +591,7 @@ def main():
             YEAR_AND_SEASON,
             allowed_barcodes=allowed_barcodes if EXPORT_LATEST_SCRAPE_ONLY else None,
         )
+        payload["sessionsWithCourses"] = screen.apply(payload["sessionsWithCourses"])
         # Sanitize for filename: slash would create a subdirectory (e.g. "Ski/Snowboard -" -> "Ski-Snowboard -")
         sport_safe = sport.replace("/", "-")
         out_path = season_dir / f"{sport_safe}_{YEAR_AND_SEASON}.json"
@@ -620,6 +623,8 @@ def main():
             centre = s.get("centre")
             if centre and sport not in centre_programs.get(centre, []):
                 centre_programs.setdefault(centre, []).append(sport)
+
+    screen.save()
 
     # Write programs.json — only include programs with sessions > 0; merge descriptions if available
     _programs_json: list = []
