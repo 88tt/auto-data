@@ -13,3 +13,4 @@ output/
 .DS_Store
 .claude/
 .ruff_cache/
+location_screen_report.json

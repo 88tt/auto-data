@@ -566,7 +566,8 @@ jobs:
                   total_sessions += count
                   if count > 0:
                       non_empty += 1
-                  no_loc = [s for s in sessions if s.get("latitude") is None or s.get("longitude") is None]
+                  # is_online sessions have no coordinates on purpose (location_screen.py)
+                  no_loc = [s for s in sessions if not s.get("is_online") and (s.get("latitude") is None or s.get("longitude") is None)]
                   for s in no_loc:
                       barcode  = s.get("barcode", "")
                       sess_num = barcode.split("_%_")[-1] if "_%_" in barcode else barcode
@@ -621,8 +622,14 @@ jobs:
                       ).fetchone()
                   db_scoped_count = row[0] if row else 0
                   print(f"DB scoped session count: {db_scoped_count}")
+                  # Sessions location_screen.py dropped on purpose (room-name
+                  # "centres") aren't lost -- see its report file.
+                  screened = 0
+                  if os.path.exists("location_screen_report.json"):
+                      screened = json.load(open("location_screen_report.json")).get("dropped_sessions", 0)
+                      print(f"Location screen dropped {screened} sessions on purpose")
                   if _li is not None:
-                      expected_json = _li["csv"]
+                      expected_json = _li["csv"] - screened
                       db_json_lost = expected_json - total_sessions
                       db_json_ok = (db_json_lost == 0)
                       if not db_json_ok:
@@ -632,9 +639,9 @@ jobs:
                           )
                   else:
                       # Fallback: compare DB count vs JSON count directly
-                      db_json_lost = db_scoped_count - total_sessions
+                      db_json_lost = db_scoped_count - screened - total_sessions
                       db_json_ok = (db_json_lost == 0)
-                      expected_json = db_scoped_count
+                      expected_json = db_scoped_count - screened
                       if not db_json_ok:
                           errors.append(
                               f"DB→JSON losslessness: DB has {db_scoped_count} scoped sessions "
