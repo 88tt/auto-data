@@ -323,8 +323,14 @@ PROGRAM_SPLITS = {
 # child(ren) to merge in. Reuses each child's own already-correct, fully
 # isolated export (via a recursive export_sport_season call, see below)
 # rather than re-deriving a new signal-matching rule for the merge itself.
+#
+# A child may be absorbed by more than one program, so it shows under each
+# (Aquatic Leadership appears under both Swim and Leadership & Employment
+# Readiness). Leadership still excludes it as the parent and then absorbs it
+# back here, so its rows are not counted twice within Leadership's own export.
 PROGRAM_ABSORPTIONS = {
     "Swim": ["Aquatic Leadership"],
+    "Leadership": ["Aquatic Leadership"],
 }
 
 
