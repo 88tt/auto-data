@@ -43,7 +43,12 @@ dfcrs = pd.DataFrame()
 dfdesc = pd.DataFrame()
 _missing_files = []  # {"activity", "series", "file", "reason"} — surfaced via clean_data_issues.json
 for i, activity in enumerate(ACTIVITIES):
-    crs_fams = [f for f in os.listdir(season) if activity in f]
+    # Folder names on disk have "/" replaced with "-" (1_scrape_w_selenium.py
+    # _activity_folder_name), so "Ski/Snowboard - " is saved as
+    # "Ski-Snowboard - ..." -- match against that, or ski/snowboard is
+    # silently skipped (it was, for the whole of Winter 2027's first export).
+    folder_key = activity.replace("/", "-")
+    crs_fams = [f for f in os.listdir(season) if folder_key in f]
     for j, series in enumerate(crs_fams):
         print('working on ', series)
         # load course info
