@@ -129,6 +129,33 @@ jobs:
         run: python 2_clean_data.py
         # No ACTIVITIES set — defaults to all activities, writes combined dfcrs.csv
 
+      # Raw scrape -> dfcrs losslessness. Every downstream check starts from
+      # dfcrs.csv, so a raw folder 2_clean_data never loads is invisible to
+      # them. Real failure (Winter 2027): all 431 ski/snowboard courses were
+      # scraped ("431 found; 431 saved") and then silently skipped by the
+      # clean step's folder match, and no check fired.
+      - name: Check raw scrape → dfcrs losslessness
+        run: |
+          python - <<'EOF'
+          import glob, json, sys
+          paths = glob.glob("raw_data/**/clean_data_issues.json", recursive=True)
+          if not paths:
+              print("clean_data_issues.json not found -- cannot check raw -> dfcrs")
+              sys.exit(1)
+          issues = json.load(open(sorted(paths)[-1]))
+          unmatched = issues.get("unmatched_raw_folders", [])
+          lost = issues.get("raw_to_clean_lost", [])
+          if unmatched:
+              print(f"Raw folders no ACTIVITIES entry matched (skipped entirely): {unmatched}")
+          for r in lost:
+              print(f"{r['folder']}: {r['lost']}/{r['raw']} courses missing from dfcrs, e.g. {r['sample']}")
+          if unmatched or lost:
+              print(f"\nRAW -> DFCRS LOSSLESSNESS FAILED: {len(unmatched)} unmatched folders, "
+                    f"{sum(r['lost'] for r in lost)} lost courses")
+              sys.exit(1)
+          print("Raw -> dfcrs: every scraped course reached dfcrs.csv")
+          EOF
+
       - name: Geocoding audit (new centres only)
         continue-on-error: true
         env:

@@ -423,6 +423,39 @@ else:
         .apply(lambda v: str(v).strip().lower() in _truthy if not isinstance(v, bool) else v)
     )
 
+# Raw -> clean losslessness. The DB/JSON losslessness checks downstream all
+# start from dfcrs.csv, so anything this script never loads is invisible to
+# them -- e.g. Winter 2027's 431 ski/snowboard courses, skipped because the
+# folder match didn't account for "/" -> "-". Record (a) raw activity folders
+# that no ACTIVITIES entry matches (only meaningful on the full, all-activities
+# run) and (b) raw course numbers in matched folders that are missing here.
+_all_raw_folders = sorted(
+    f for f in os.listdir(season)
+    if os.path.isfile(os.path.join(season, f, "courses.csv"))
+)
+_matched_folders = {
+    f for f in _all_raw_folders
+    if any(a.replace("/", "-") in f for a in ACTIVITIES)
+}
+_unmatched_folders = (
+    [f for f in _all_raw_folders if f not in _matched_folders]
+    if ACTIVITIES == ALL_ACTIVITIES else []
+)
+_clean_course_numbers = set(dfcrs["Course Number"].astype(str)) if len(dfcrs) else set()
+_raw_lost = []
+for _folder in sorted(_matched_folders):
+    try:
+        _raw = pd.read_csv(os.path.join(season, _folder, "courses.csv"), usecols=["Course Number"])
+    except (pd.errors.EmptyDataError, ValueError):
+        continue  # empty/odd files are already reported via _missing_files
+    _lost = sorted(set(_raw["Course Number"].astype(str)) - _clean_course_numbers)
+    if _lost:
+        _raw_lost.append({"folder": _folder, "lost": len(_lost), "raw": int(_raw["Course Number"].nunique()), "sample": _lost[:10]})
+if _unmatched_folders:
+    print(f"WARNING: {len(_unmatched_folders)} raw activity folders matched no ACTIVITIES entry and were skipped: {_unmatched_folders}")
+for _r in _raw_lost:
+    print(f"WARNING: {_r['lost']}/{_r['raw']} courses in raw folder {_r['folder']!r} missing from dfcrs: {_r['sample']}")
+
 # save dfcrs to csv
 dfcrs.to_csv(f'{season}/dfcrs.csv', index=False)
 
@@ -432,4 +465,12 @@ dfcrs.to_csv(f'{season}/dfcrs.csv', index=False)
 # job, and the final "combined" run covers the same underlying files as the union of the
 # group runs, so its issues list is already the complete one).
 with open(f'{season}/clean_data_issues.json', 'w') as f:
-    json.dump({"missing_files": _missing_files, "unparsed_dates": _unparsed_dates}, f, indent=2, default=str)
+    json.dump(
+        {
+            "missing_files": _missing_files,
+            "unparsed_dates": _unparsed_dates,
+            "unmatched_raw_folders": _unmatched_folders,
+            "raw_to_clean_lost": _raw_lost,
+        },
+        f, indent=2, default=str,
+    )
