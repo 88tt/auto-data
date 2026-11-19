@@ -130,6 +130,15 @@ def main():
                 print(f"Could not resolve season IDs: [{err_type}] {err_msg}", file=sys.stderr)
                 sys.exit(1)
             print(f"Available seasons on site: {season_map}")
+            # Saved for season_watch.py, which flags seasons on the site that
+            # SEASON_NAMES doesn't cover (e.g. "Leadership 2027" was missed for
+            # weeks because nothing compared the two). Best-effort: never let
+            # this bookkeeping break the scrape itself.
+            try:
+                with open(os.path.join(output_dir, f"available_seasons_{GROUP}.json"), "w") as f:
+                    json.dump({"seasons": season_map, "season_names": SEASON_NAMES}, f, indent=2)
+            except Exception as write_err:
+                print(f"Warning: could not write available_seasons_{GROUP}.json: {write_err}", file=sys.stderr)
             season_ids = []
             for name in SEASON_NAMES:
                 matches = {k: v for k, v in season_map.items() if name.lower() in k.lower()}
